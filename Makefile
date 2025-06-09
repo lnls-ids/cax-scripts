@@ -1,7 +1,14 @@
-.PHONY: install uninstall
+# PACKAGE:=$(shell basename $(shell pwd))
+ifeq ($(CONDA_PREFIX),)
+$(error Please activate your conda/mamba environment before installing)
+endif
+
+PACKAGE := caxscripts
+PIP ?= pip
 
 install:
-	pip install -e .
+	$(PIP) install -e .
+	git clean -fdX
 
 uninstall:
-	pip uninstall -y cax-scripts
+	$(PIP) uninstall -y $(PACKAGE)
