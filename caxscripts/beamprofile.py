@@ -59,7 +59,6 @@ import getopt
 import fabio
 import numpy as np
 import os
-import pyFAI
 import re
 import sys
 import time

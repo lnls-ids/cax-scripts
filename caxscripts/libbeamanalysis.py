@@ -1,7 +1,7 @@
 #!/usr/bin/python3
 # -*- coding: utf-8 -*-
 
-from numba import jit
+# from numba import jit
 import numpy as np
 from scipy.optimize import curve_fit
 
