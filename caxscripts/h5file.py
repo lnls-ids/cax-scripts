@@ -35,24 +35,24 @@ class HDF5File:
         with h5py.File(name=self.file, mode='a') as f:
             f.attrs.update(metadata_dict)
 
-    def save_dataset(self, dsetname, dsetmetadata, dsetdata, grpname=None, t0=None):
-        if grpname: #todo: checar se vale grpname='' e dsetname ser '/dsetname'
-            dsetname = '/'.join([grpname,dsetname])
+    def save_dataset(self, dsetname, dsetdata, dsetmetadata=None, grpname='', t0=None):
+        dsetname = '/'.join([grpname,dsetname])
+        if dsetmetadata is None: dsetmetadata = {}
         with h5py.File(name=self.file, mode='a') as f:
             dset = f.create_dataset(name=dsetname, data=dsetdata, compression='gzip')
             dset.attrs.update(dsetmetadata)
             if t0:
                 dset.attrs['ellapsed time'] = time.time() - t0
     
-    def save_group(self, grpname, grpmetadata):
+    def save_group(self, grpname, grpmetadata=None):
+        if grpmetadata is None: grpmetadata = {}
         with h5py.File(name=self.file, mode='a') as f:
             grp = f.create_group(name=grpname)
             grp.attrs.update(grpmetadata)
 
-    #todo: logic for groups; create group and be able to save metadata to group and datasets to the group
 
 
-
+# todo: update with the implemented logic for groups
 if __name__ == '__main__':
 
     directory = '.'
