@@ -324,11 +324,14 @@ def detector_positions(N=100):
     return np.linspace(ZPOSMAX, ZPOSMIN, N)
 
 
-def caustic_scan(filename, filedir, positions=None, save='default'):
+def caustic_scan(filename, filedir, positions=None):
+
+    # saving beamline state before the scan
+    utils.save_beamline_config(filename, filedir)
 
     if positions is None: positions = detector_positions()
 
-    file = HDF5File(filename, filedir)
+    h5file = HDF5File(filename, filedir)
 
     t0 = time.time()
 
@@ -343,13 +346,9 @@ def caustic_scan(filename, filedir, positions=None, save='default'):
         }
 
         dvf2img = utils.get_image(dvf=CAX.dvf_B1)
-        dvf2metadata = {
-            'exposure_time':CAX.dvf_B1.exposure_time,
-            'acquisition_time':CAX.dvf_B1.acquisition_time
-        }
 
-        file.save_group(grpname=scaname, grpmetadata=scanmetadata)
-        file.save_dataset(grpname=scaname, dsetname='dvf2', dsetmetadata=dvf2metadata, dsetdata=dvf2img)
+        h5file.save_group(grpname=scaname, grpmetadata=scanmetadata)
+        h5file.save_dataset(grpname=scaname, dsetname='dvf2', dsetdata=dvf2img)
 
     t1 = time.time()
 
