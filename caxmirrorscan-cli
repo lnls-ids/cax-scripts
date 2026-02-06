@@ -2,39 +2,64 @@
 
 """CLI to control CAX mirror motors for scanning its mirror."""
 
-from datetime import datetime
-import time
+# from datetime import datetime
+# import time
 import numpy as np
 import matplotlib.pyplot as plt
 
-from CAXCtrl import CAXCtrl
-from motorkin import M1Kinematics
-from .caxscripts.motormov import CAXMirrorMove
-
-SCAN_TYPES = {
-    1 : 'x translation (Tx)',
-    2 : 'x rotation    (Rx)',
-    3 : 'y translation (Ty)',
-    4 : 'y rotation    (Ry)',
-    5 : 'z rotation    (Rz)',
-    6 : 'Caustic',
-    7 : 'Lens (DVF2) translation',
-}
+# from siriuspy.devices import CAXCtrl
+# from motorkin import M1Kinematics
+from caxscripts.motormov import (
+    DeviceMove, CAXMirrorMove, CAXCausticMove, CAXSlitMove, SCAN_TYPES
+    )
 
 
 def scan_menu_select():
     """Select scan type from a menu."""
-    print("###\n###  CAX Mirror Scan\n###\n")
-    print("Select scan type:")
+    print("Select scan (type a list of numbers separated by spaces):\n")
     for key, value in SCAN_TYPES.items():
         print(f"  {key} - {value} scan")
+
+    caxdevs = list()
     while True:
-        choice = input("Enter choice [1-6]: ")
-        if choice in ['1', '2', '3', '4', '5', '6']:
-            return int(choice)
+        choices = input("\n Enter choice [1-9], 'q' to quit: ")
+        if choices.lower() == 'q':
+            print("Exiting... Done.")
+            exit(0)
+        choices = choices.strip().split()
+        for choice in choices:
+            if choice not in ['1', '2', '3', '4', '5', '6', '7', '8', '9']:
+                print("Invalid choice."
+                    " Please enter a number between 1 and 9.")
+                break
         else:
-            print("Invalid choice."
-                  " Please enter a number between 1 and 6.")
+            break
+
+    for choice in choices:
+        if choice in ['1', '2', '3', '4', '5']:
+            caxdev = CAXMirrorMove()
+        elif choice in ['6', '7']:
+            caxdev = CAXCausticMove()
+        else:
+            caxdev = CAXSlitMove()
+        caxdevs.append(caxdev)
+    return set(choices), set(caxdevs)
+
+
+def status_show(caxdev):
+    """Show current status of the device."""
+    print(f"\n##### {caxdev.devname} #####")
+    status = caxdev.device_status()
+
+    # DEBUG
+    print(f"\n>>>\n DEBUG: status dict: {status} \n<<<\n")
+    # END DEBUG
+
+    for key, val in status.items():
+        print(f"\n -- {key.replace('_', ' ').title()}:\n")
+        for pv, v in val.items():
+            print(f"  * {pv:15} ({v[1]:>8}) : {v[0]:10.4f}")
+    print("\n#####\n")
 
 
 def parameters_ask(scantype: str):
@@ -50,125 +75,58 @@ def parameters_ask(scantype: str):
     return start, stop, nsteps, dtime
 
 
-def mirror_scan(caxmov: CAXMirrorMove, scantype: int):
-    """Get Rx scan parameters from user."""
-    start, stop, nsteps, dtime = parameters_ask(scantype)
-
-    caxmovtypes = {
-        1 : caxmov.tx_mov,
-        2 : caxmov.rx_mov,
-        3 : caxmov.ty_mov,
-        4 : caxmov.ry_mov,
-        5 : caxmov.rz_mov,
-        6 : caxmov.caustic,
-        7 : caxmov.lens,
-    }
-
-    cmov = caxmovtypes[scantype]
-    try:
-        prm = (start, stop, nsteps, dtime)
-        status, err, results = scan_watch(cmov, prm, scantype)
-        if not status:
-            raise Exception(
-                f" ERROR : while executing {SCAN_TYPES[scantype]} scan:\n"
-                f" >>> {err}"
-                )
-    except Exception as err:
-        print(f" ERROR during {SCAN_TYPES[scantype]} scan:\n {err}")
-        return None
-
-    return results
-
-
-def scan_watch(cmov, prm, scantype):
-    """Status of movement."""
-    start, stop, nsteps, dtime = prm
-    sct = SCAN_TYPES[scantype]
-    print(f"\n\n >>>>> Starting {sct} scan... ")
-    print(f" >>>>> Init time: {datetime.ctime}\n")
-
-    for pos in np.linspace(start, stop, nsteps):
-        print(f" Setting {sct} angle/position to {pos}... ", end="")
-        try:
-            results = cmov(pos)
-        except Exception as err:
-            return False, err, None
-        time.sleep(dtime)
-        print(" done.")
-
-    # Return: result status, error status, results
-    return True, None, results
-
-
-def mirror_current_positions(caxmov):
-    """Show current statuts of motors."""
-    m1_pos_x = caxmov.get_mirror_pos('tx')
-    m1_pos_y = caxmov.get_mirror_pos('ty')
-    m1_pos_z = caxmov.get_mirror_pos('tz')
-
-    m1_angle_x = caxmov.get_mirror_pos('rx')
-    m1_angle_y = caxmov.get_mirror_pos('ry')
-    m1_angle_z = caxmov.get_mirror_pos('rz')
-
-    pos_lens = caxmov.get_mirror_pos('lens')
-
-    pos_slits_1 = caxmov.slit_position(1)
-    pos_slits_2 = caxmov.slit_position(2)
-
-    cax_status = {
-        'mirror x position' : m1_pos_x,
-        'mirror y position' : m1_pos_y,
-        'mirror z position' : m1_pos_z,
-
-        'mirror x angle' : m1_angle_x,
-        'mirror y angle' : m1_angle_y,
-        'mirror z angle' : m1_angle_z,
-
-        'slits, set 1' : pos_slits_1,
-        'slits, set 2' : pos_slits_2,
-
-        'lens position' : pos_lens,
-    }
-
-    print("\n##### Current status of motors")
-    for motor, pos in cax_status.items():
-        print(f"  * {motor:20} : {pos:10.4f}")
-    print("\n#####\n")
-
-
-def show_results(results):
+def show_results(results, scantype: str):
     """Show scan results."""
     print("\n\n##### Scan Results #####\n")
     fig, ax = plt.subplots()
     ax.plot(results['position'], results['intensity'], marker='o')
     ax.set_xlabel('Position/Angle (urad)')
     ax.set_ylabel('Intensity (a.u.)')
-    ax.set_title('CAX Mirror Scan Results')
+    dt = SCAN_TYPES[scantype]
+    ax.set_title(f'CAX {dt} Scan Results')
     plt.grid()
     plt.show()
-    # for key, value in results.items():
-    #     print(f"  * {key:20} : {value}")
-    # print("\n#####\n")
 
 
 def main():
     """Main function to run the CLI."""
+    # DEBUG: Verify module origin
+    # import siriuspy.devices.beamlines.mirror as mirror
+    # print(f"\n[DEBUG] Mirror module loaded from: {mirror.__file__}\n")
+    # END DEBUG
+
     # Initialize control.
-    cax    = CAXCtrl()
-    m1kin  = M1Kinematics()
-    caxmov = CAXMirrorMove(cax, m1kin)
+    # caxctrl = CAXCtrl()
+    # caxmov  = CAXMirrorMove(caxctrl)
+    # m1kin   = M1Kinematics()
 
     # Current status.
-    print("\n\n#####\n###### Carcará Scanning System\n#####\n")
-    mirror_current_positions(caxmov)
+    print("\n\n#####\n##### Carcará Scanning System\n#####\n")
+    # motor_positions(caxmov)
 
     # Select scan type.
-    scantype = scan_menu_select()
-    results = mirror_scan(caxmov, scantype)
+    scantype, caxdevs = scan_menu_select()
+
+    # DEBUG: Show status of each device.
+    # print(f"\n SCAN TYPES = {SCAN_TYPES}\n")
+    # END DEBUG
+
+    print("\n\n##### Current Status of Selected Devices #####")
+
+    # print("Selected scan types:\n"
+    #       f" {', '.join([SCAN_TYPES[st] for st in scantype])}\n")
+
+    for caxdev in caxdevs:
+        # print(f"\n--- {caxdev.devname} ---")
+        status_show(caxdev)
+        # print("\n-----------------------\n")
+    return
+
+    results  = DeviceMove.device_scan(scantype, caxdevs)
 
     # Show and/or record results.
     if results is not None:
-        show_results(results)
+        show_results(results, scantype)
         recres = input(" Do you want to save the results to a file? (y/n): ")
         if recres.lower() == 'y':
             filename = input(" Enter filename to save results"

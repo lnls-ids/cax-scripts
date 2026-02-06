@@ -1,40 +1,215 @@
 """This class controls the CAX's motors for scanning its mirror."""
 
-import sys
 import time
-from typing import Literal
+# from typing import Literal
 import numpy as np
 from siriuspy.devices import CAXCtrl
 from .h5file import HDF5File
 from . import utils
-from pyKinGalil_module import pyKinGalil as M1Kinematics
 
-path_mirror_gui_pkg = '/usr/local/scripts/gui/mirror-gui/kinUtils'
-sys.path.append(path_mirror_gui_pkg)
+from datetime import datetime
+
+# from caxscripts import h5file
+# import matplotlib.pyplot as plt
+
+# from pyKinGalil_module import pyKinGalil as M1Kinematics
+
+# path_mirror_gui_pkg = '/usr/local/scripts/gui/mirror-gui/kinUtils'
+# sys.path.append(path_mirror_gui_pkg)
 
 # ## Beamline parameters.
 # Detector range.
 ZPOSMIN = 135.14
 ZPOSMAX = 560
 
+SCAN_TYPES = {
+    '1' : 'Mirror x translation (Tx)',
+    '2' : 'Mirror x rotation    (Rx)',
+    '3' : 'Mirror y translation (Ty)',
+    '4' : 'Mirror y rotation    (Ry)',
+    '5' : 'Mirror z rotation    (Rz)',
+    '6' : 'Caustic',
+    '7' : 'Lens (DVF2) translation',
+    '8' : 'Slit set 1 window (before mirror)',
+    '9' : 'Slit set 2 window (after mirror)',
+}
+
+
+class DeviceMove:
+    """."""
+
+    def __init__(self, scantype: int, caxdev):
+        """."""
+        self.cax  = caxdev.cax
+        self.cmov = caxdev.scan_function(scantype)
+        self.scantype = scantype
+
+    def device_scan(self):
+        """."""
+        try:
+            status, err, results = self.scan_watch()
+            if not status:
+                raise Exception(
+                    " ERROR : while executing "
+                    f"{SCAN_TYPES[self.scantype]} scan:\n"
+                    f" >>> {err}"
+                    )
+        except Exception as err:
+            print(f" ERROR during {SCAN_TYPES[self.scantype]} scan:\n {err}")
+            return None
+
+        return results
+
+    def scan_watch(self):
+        """Status of movement."""
+        sct = SCAN_TYPES[self.scantype]
+        print(f"\n\n >>>>> Starting {sct} scan... ")
+        print(f" >>>>> Init time: {datetime.ctime}\n")
+
+        for pos in np.linspace(self.start, self.stop, self.nsteps):
+            print(f" Setting {sct} angle/position to {pos}... ", end="")
+            try:
+                results = self.cmov(pos)
+            except Exception as err:
+                return False, err, None
+            time.sleep(self.dtime)
+            print(" done.")
+
+        # Return: result status, error status, results
+        return True, None, results
+
 
 class CAXMirrorMove:
     """."""
 
-    def __init__(self, cax: CAXCtrl, m1kin: M1Kinematics):
+    def __init__(self):
         """."""
-        self.cax   = cax
-        self.m1    = cax.mirror
-        self.m1kin = m1kin
-        self._Motors = Literal['ry', 'tx', 'y1', 'y2', 'y3', 'rx', 'rz', 'y']
+        self.cax     = CAXCtrl()
+        self.m1      = self.cax.mirror
+        self.devname = 'CAX Mirror'
 
-        self.tx_mov  = self.scan_mirror()
-        self.rx_mov  = self.scan_mirror()
-        self.ty_mov  = self.scan_mirror()
-        self.ry_mov  = self.scan_mirror()
-        self.rz_mov  = self.scan_mirror()
-        self.caustic = self.scan_mirror()
-        self.lens    = self.scan_mirror()
+        # self.m1kin = m1kin
+        # self._Motors = Literal[
+        #     'ry', 'tx', 'y1', 'y2', 'y3', 'rx', 'rz', 'y'
+        #     ]
+
+        # WARNING: These are just place holders - methods must be implemented!
+
+        # x coordinate.
+        # self.tx_mov  = self.mirror_scan()
+        # self.rx_mov  = self.mirror_scan()
+
+        # y coordinate.
+        # self.ty_mov  = self.mirror_scan()
+        # self.ry_mov  = self.mirror_scan()
+
+        # z coordinate.
+        # self.rz_mov  = self.mirror_scan()
+
+        # Lens scan.
+        # self.lens    = self.lens_scan()
+
+    def device_status(self):
+        """Show initial statuts of mirror."""
+        motor_descr = {
+            'TX' : 'x position',
+            'TY' : 'y position',
+            'RX' : 'x angle'   ,
+            'RY' : 'y angle'   ,
+            'RZ' : 'z angle'   ,
+            'Y1' : 'leveler Z-',
+            'Y2' : 'leveler X+',
+            'Y3' : 'leveler Z+',
+        }
+        motor_list = list(motor_descr.keys())
+
+        raw_motor  = {motor_descr[k] : [] for k in motor_list}
+        kin_motor  = {motor_descr[k] : [] for k in motor_list}
+        dev_status = dict()
+        count = 0
+
+        # DEBUG
+        # print("\n>>>\n DEBUG: vars(self.m1.PVS).items(): "
+        #       f"{vars(self.m1.PVS).keys()} \n<<<\n")
+        # END DEBUG
+
+        # Get PVs.
+        for key, val in vars(self.m1.PVS).items():
+            pv = key.strip('CS').split('_')
+            kn = key.split('_')[0]
+
+            if len(pv) < 2:
+                continue
+
+            # Select PVs: raw motors or kinematics.
+            if pv[0] in motor_list:
+                v = self.m1[val]
+                md = motor_descr[pv[0]]
+                if pv[1] in ['MON', 'ENBL']:
+                    if kn == 'CS':
+                        kin_motor[md].append(v)
+                    else:
+                        raw_motor[md].append(v)
+
+                # Show progress bar, for some checkings may be slow.
+                count = self.progress_bar(self.devname, count, key)
+
+        dev_status['raw_motor']  = raw_motor
+        dev_status['kinematics'] = kin_motor
+        print(" done.\n")
+        return dev_status
+
+    def progress_bar(self, devname, count, pv):
+        """Show progress bar."""
+        pb = ['|', '/', '-', '\\']
+        print(f"\r Scanning {devname}  status ..."
+              f" {pb[count % 4]} [{pv}]",
+              end="", flush=True)
+        return count + 1
+
+    def device_scan(self, filename, filedir, motor, positions=None):
+        """."""
+        if positions is None:
+            positions = self.mirror_positions(motor)
+
+        file = HDF5File(filename, filedir)
+
+        t0 = time.time()
+
+        for i, pos in enumerate(positions):
+            print(f"Step: {i+1}/{len(positions)} -"
+                f" Moving mirror {motor} to position {pos}")
+            self.set_mirror_pos(motor, pos)
+
+            scaname = f'scan-{i:04d}'
+            scanmetadata = {
+                f'{motor}_pos'     : self.get_mirror_pos(motor),
+                'photocollector'   : self.cax.mirror.photocurrent_signal,
+            }
+
+            dvf1img = utils.get_image(dvf=self.cax.dvf_A1)
+            dvf1metadata = {
+                'exposure_time'    : self.cax.dvf_A1.exposure_time,
+                'acquisition_time' : self.cax.dvf_A1.acquisition_time
+            }
+            dvf2img = utils.get_image(dvf=self.cax.dvf_B1)
+            dvf2metadata = {
+                'exposure_time'    : self.cax.dvf_B1.exposure_time,
+                'acquisition_time' : self.cax.dvf_B1.acquisition_time
+            }
+
+            file.save_group(grpname=scaname, grpmetadata=scanmetadata)
+            file.save_dataset(grpname=scaname, dsetname='dvf1',
+                            dsetmetadata=dvf1metadata,
+                            dsetdata=dvf1img)
+            file.save_dataset(grpname=scaname, dsetname='dvf2',
+                            dsetmetadata=dvf2metadata,
+                            dsetdata=dvf2img)
+
+        t1 = time.time()
+
+        print()
+        print(f'Elapsed time [min]: {(t1-t0)/60:.2f}')
 
     """
     Dada a posicao (ry, tx, y1, y2, y3), a posição virtual (x, y, rx, ry, rz)
@@ -53,84 +228,6 @@ class CAXMirrorMove:
 
     """
 
-    # todo: check if M1Kin(kin_mode=0) or M1Kin(kin_mode=1) change something.
-    # I expect not
-
-    def virtual_motor():
-        """."""
-        # /usr/local/scripts/gui/mirror-gui
-        # x, y, rx, ry, rz  ->  ry, tx, y1, y2, y3
-        # use the method inverse_transf of the pyKinGalil class
-        # G = Matrix([-.X_sirius+X_newton, -.Y_sirius+Y_newton, -.Rx+Rx_newton,
-        # -.Ry+Ry_newton, -.Rz+Rz_newton])
-        # base_info is a class variable, a SimpleNamespace(),
-        # filled along the methods of the class
-        # .setup() fills base_info
-
-        # base_info
-        # .X_sirius, .Y_sirius, .Z_sirius = .XYZ
-        # .XYZ = .T * Matrix([[0], [0], [0], [1]])
-        # .T = .Ta0 * .T01 * .T12 * .T23 * .T34 * .T45 * .T56 * .T67 * .T78
-        # .Ta0 = 1
-        # .T01 = HomTransl_y(-.dist1-.dist2)
-        # .T12 = HomTransl_x(.q2)
-        # .T23 = HomRot_y(.Ry_pure)
-        # .T34 = HomTransl_y(.dist1)
-        # .T45 = HomTransl_y(.q1)
-        # .T56 = HomRot_x(.Rx_pure)
-        # .T67 = HomRot_z(.Rz_pure)
-        # .T78 = HomTransl_y(.dist2)
-        # .dist1 = symbol('Loc_dist1')
-        # .dist2 = symbol('Loc_dist2')
-        # .q2 = .Ux * .base_resolution
-        # .Ux = .Motor_B
-        # .base_resolution = symbol('Loc_base_res')
-
-        # .Ry_pure = (0.369287740067191 - 0.369287740067191 *
-        #             sqrt(1 - 0.0294338642691296 * .Uz * .base_resolution))
-
-        # .Uz = .Motor_A
-        # .q1 = .Uy_lev
-        # .Uy_lev = symplify(.solutions[0][2])
-        # .solutions = solve(equations, (.KinPosAxisA, .KinPosAxisC, .Uy))
-
-        # equations = [
-        #   series(series(.r1_0[1]/.leveler_enc_res-.KinPosMotor1,
-        #                 x=.KinPosAxisA, x0=0, n=3, dir='+').removeO(),
-        #                 x=.KinPosAxisC, x0=0, n=3, dir='+').removeO(),
-        #   series(series(.r2_0[1]/.leveler_enc_res-.KinPosMotor2,
-        #                 x=.KinPosAxisA, x0=0, n=3, dir='+').removeO(),
-        #                 x=.KinPosAxisC, x0=0, n=3, dir='+').removeO(),
-        #   series(series(.r3_0[1]/.leveler_enc_res-.KinPosMotor3,
-        #                 x=.KinPosAxisA, x0=0, n=3, dir='+').removeO(),
-        #                 x=.KinPosAxisC, x0=0, n=3, dir='+').removeO()
-        # ]
-
-        # .r1_0 = (Rot_x(.KinPosAxisA) * Rot_z(.KinPosAxisC) * .r1 +
-        #          .Uy * np.array([[0], [1], [0]]))
-        # .r2_0 = (Rot_x(.KinPosAxisA) * Rot_z(.KinPosAxisC) * .r2 +
-        #          .Uy*np.array([[0], [1], [0]]))
-        # .r3_0 = (Rot_x(.KinPosAxisA) * Rot_z(.KinPosAxisC) * .r3 +
-        #          .Uy * np.array([[0], [1], [0]]))
-
-        # .KinPosAxisA = symbol('KinPosAxisA')
-        # .KinPosAxisC = symbol('KinPosAxisC')
-        # .r1 = np.array([[.x1], [.y1], [.z1]])
-        # .r2 = np.array([[.x2], [.y2], [.z2]])
-        # .r3 = np.array([[.x3], [.y3], [.z3]])
-        # .x1, .y1, .z1 = symbol('Loc_x1'), 0, symbol('Loc_z1')
-        # .x2, .y2, .z2 = symbol('Loc_x2'), 0, symbol('Loc_z2')
-        # .x3, .y3, .z3 = symbol('Loc_x3'), 0, symbol('Loc_z3')
-        # .Uy = symbol('Uy')
-        # .leveler_enc_res = symbol('Loc_leveler_res')
-        # .KinPosMotor1 = .Motor_C
-        # .Rx_pure = simplify(.solutions[0][0])
-        # .Rz_pure = simplify(.solutions[0][1])
-        # .Rx = .Rx_pure
-        # .Ry = .Ry_pure
-        # .Rz = .Rz_pure
-        pass
-
     def get_mirror_real(self):
         """."""
         ry, tx, y1, y2, y3 = (self.m1.ry_pos,
@@ -148,16 +245,16 @@ class CAXMirrorMove:
         self.m1.y2_pos = y2
         self.m1.y3_pos = y3
 
-    def get_mirror_virtual(self):
-        """."""
-        ry, tx, y1, y2, y3 = self.get_mirror_real()
-        tx, ty, rx, ry, rz = self.m1kin.direct_transf(ry, tx, y1, y2, y3)
-        return tx, ty, rx, ry, rz
+    # def get_mirror_virtual(self):
+    #     """."""
+    #     ry, tx, y1, y2, y3 = self.get_mirror_real()
+    #     tx, ty, rx, ry, rz = self.m1kin.direct_transf(ry, tx, y1, y2, y3)
+    #     return tx, ty, rx, ry, rz
 
-    def set_mirror_virtual(self, tx, ty, rx, ry, rz):
-        """."""
-        ry, tx, y1, y2, y3 = self.m1kin.inverse_transf(tx, ty, rx, ry, rz)
-        self.set_mirror_real(ry, tx, y1, y2, y3)
+    # def set_mirror_virtual(self, tx, ty, rx, ry, rz):
+    #     """."""
+    #     ry, tx, y1, y2, y3 = self.m1kin.inverse_transf(tx, ty, rx, ry, rz)
+    #     self.set_mirror_real(ry, tx, y1, y2, y3)
 
     def get_mirror_pos(self, motor):
         """."""
@@ -213,55 +310,43 @@ class CAXMirrorMove:
         # np.linspace(pos_min, pos_max, N) for each motor
         raise NotImplementedError
 
-    def scan_mirror(self, filename, filedir, motor, positions=None):
+
+# ----- Slits ------- #
+
+class CAXSlitMove:
+    """Class to control slit scan of CAX beamline."""
+
+    def __init__(self, filename=None, filedir=None):
         """."""
-        if positions is None:
-            positions = self.mirror_positions(motor)
+        self.cax = CAXCtrl()
+        self.devname = 'CAX Slit'
 
-        file = HDF5File(filename, filedir)
+        self.h5file = (
+            HDF5File(filename, filedir) if filename is not None else None
+            )
 
-        t0 = time.time()
+    def device_status(self):
+        """Show initial statuts of mirror."""
+        slit_descr = {
+            'TOP'    : 'top blade position',
+            'BOTTOM' : 'bottom blade position',
+            'LEFT'   : 'left blade position',
+            'RIGHT'  : 'right blade position',
+        }
+        slit_list = list(slit_descr.keys())
 
-        for i, pos in enumerate(positions):
-            print(f"Step: {i+1}/{len(positions)} -"
-                f" Moving mirror {motor} to position {pos}")
-            self.set_mirror_pos(motor, pos)
+        slits = list()
+        dev_status = dict()
 
-            scaname = f'scan-{i:04d}'
-            scanmetadata = {
-                f'{motor}_pos'     : self.get_mirror_pos(motor),
-                'photocollector'   : self.cax.mirror.photocurrent_signal,
-            }
-
-            dvf1img = utils.get_image(dvf=self.cax.dvf_A1)
-            dvf1metadata = {
-                'exposure_time'    : self.cax.dvf_A1.exposure_time,
-                'acquisition_time' : self.cax.dvf_A1.acquisition_time
-            }
-            dvf2img = utils.get_image(dvf=self.cax.dvf_B1)
-            dvf2metadata = {
-                'exposure_time'    : self.cax.dvf_B1.exposure_time,
-                'acquisition_time' : self.cax.dvf_B1.acquisition_time
-            }
-
-            file.save_group(grpname=scaname, grpmetadata=scanmetadata)
-            file.save_dataset(grpname=scaname, dsetname='dvf1',
-                            dsetmetadata=dvf1metadata,
-                            dsetdata=dvf1img)
-            file.save_dataset(grpname=scaname, dsetname='dvf2',
-                            dsetmetadata=dvf2metadata,
-                            dsetdata=dvf2img)
-
-        t1 = time.time()
-
-        print()
-        print(f'Elapsed time [min]: {(t1-t0)/60:.2f}')
-
-    # ----- Slits ------- #
-
-    def get_slit_pos(self, slit, side):
-        """."""
-        return getattr(slit, f'{side}_pos')
+        # Get PVs.
+        for key, val in vars(self.cax.slit_A1.PVS).items():
+            pv = key.strip('CS').split('_')
+            # Select PVs.
+            if pv[0] in slit_list and pv[1] == 'MON':
+                v = self.cax.slit_A1[val]
+                slits.append((pv[0], v))
+        dev_status['slits'] = slits
+        return dev_status
 
     def set_slit_pos(self, side, pos):
         """."""
@@ -274,7 +359,9 @@ class CAXMirrorMove:
         side_func = side_func_dict[side]
         side_func(value=pos)
 
-    def set_slit_all(self, slit, top_pos, bottom_pos, left_pos, right_pos):
+    def set_slit_all(self, slit,
+                     top_pos, bottom_pos,
+                     left_pos, right_pos):
         """."""
         slit.move_robust_top(value=top_pos)
         slit.move_robust_bottom(value=bottom_pos)
@@ -286,12 +373,11 @@ class CAXMirrorMove:
         # 2 arrays of slit center positions: x and y
         raise NotImplementedError
 
-    def scan_slit(self, filename, filedir, slit, positions=None, sqsize=0.4):
+    def scan_slit(self, slit, positions=None, sqsize=0.4):
         """."""
         if positions is None:
             xposes, yposes = self.slit_positions(slit)
 
-        file = HDF5File(filename, filedir)
         t0 = time.time()
         for i, posx in enumerate(xposes):
             for j, posy in enumerate(yposes):
@@ -304,36 +390,59 @@ class CAXMirrorMove:
                             posy+sqsize/2, posy-sqsize/2,
                             posx-sqsize/2, posx+sqsize/2)
 
+                # Structured data saving.
+                # Name, generic metadata.
                 scaname = f'scan-{i:04d}-{j:04d}'
                 scanmetadata = {
-                    'slit_top': self.get_slit_pos(slit, 'top'),
-                    'slit_bottom': self.get_slit_pos(slit, 'bottom'),
-                    'slit_left': self.get_slit_pos(slit, 'left'),
-                    'slit_right': self.get_slit_pos(slit, 'right'),
+                    'slit_top'    : self.get_slit_pos(slit, 'top'),
+                    'slit_bottom' : self.get_slit_pos(slit, 'bottom'),
+                    'slit_left'   : self.get_slit_pos(slit, 'left'),
+                    'slit_right'  : self.get_slit_pos(slit, 'right'),
                 }
 
+                # Data, metadata, save it.
                 dvf1img = utils.get_image(dvf=self.cax.dvf_A1)
                 dvf1metadata = {
                     'exposure_time'    : self.cax.dvf_A1.exposure_time,
                     'acquisition_time' : self.cax.dvf_A1.acquisition_time
                 }
+                dvf1metadata.update(scanmetadata)
+                data_save(self.h5file, scaname, dvf1metadata,
+                          dvf1img, devname='dvf1')
+
+                # Data, metadata, save it.
                 dvf2img = utils.get_image(dvf=self.cax.dvf_B1)
                 dvf2metadata = {
                     'exposure_time'    : self.cax.dvf_B1.exposure_time,
                     'acquisition_time' : self.cax.dvf_B1.acquisition_time
                 }
-
-                file.save_group(grpname=scaname, grpmetadata=scanmetadata)
-                file.save_dataset(grpname=scaname, dsetname='dvf1',
-                                dsetmetadata=dvf1metadata, dsetdata=dvf1img)
-                file.save_dataset(grpname=scaname, dsetname='dvf2',
-                                dsetmetadata=dvf2metadata, dsetdata=dvf2img)
+                dvf2metadata.update(scanmetadata)
+                data_save(self.h5file, scaname, dvf2metadata,
+                          dvf2img, devname='dvf2')
 
         t1 = time.time()
         print()
         print(f'Elapsed time [min]: {(t1-t0)/60:.2f}')
 
-    # ----- caustic ------- #
+
+# ----- caustic ------- #
+
+class CAXCausticMove:
+    """Class to control caustic scan of CAX beamline."""
+
+    def __init__(self, filename=None, filedir=None):
+        """."""
+        self.cax = CAXCtrl()
+        self.devname = 'CAX Caustic'
+
+        self.h5file = (
+            HDF5File(filename, filedir) if filename is not None else None
+            )
+
+    def device_status(self):
+        """Show initial statuts of caustic motor."""
+        dev_status = {'caustic': [('Z', self.cax.dvf_B1.z_pos)]}
+        return dev_status
 
     def set_detector_pos(self, pos):
         """."""
@@ -344,40 +453,61 @@ class CAXMirrorMove:
         """."""
         return self.cax.dvf_B1.z_pos
 
-    def detector_positions(self, n=100):
+    def detector_positions(self, nsteps=100):
         """."""
-        return np.linspace(ZPOSMAX, ZPOSMIN, n)
+        return np.linspace(ZPOSMAX, ZPOSMIN, nsteps)
 
-    def caustic_scan(self, filename, filedir, positions=None):
+    def caustic_scan(self, positions=None):
         """."""
         # saving beamline state before the scan
-        utils.save_beamline_config(filename, filedir)
+        utils.config_save(self.cax, self.h5file)
 
         if positions is None:
             positions = self.detector_positions()
 
-        h5file = HDF5File(filename, filedir)
         t0 = time.time()
         for i, pos in enumerate(positions):
             print(f"Step: {i+1}/{len(positions)} -"
-                f" Moving detector to position {pos}")
+                  f" Moving detector to position {pos}")
 
             self.set_detector_pos(pos)
-            scaname = f'scan-{i:04d}'
-            scanmetadata = {
+            self.scaname      = f'scan-{i:04d}'
+            self.dvf2img      = utils.get_image(dvf=self.cax.dvf_B1)
+            self.scanmetadata = {
                 'z_pos': self.get_detector_pos(),
             }
-
-            dvf2img = utils.get_image(dvf=self.cax.dvf_B1)
-            h5file.save_group(grpname=scaname, grpmetadata=scanmetadata)
-            h5file.save_dataset(grpname=scaname, dsetname='dvf2',
-                                dsetdata=dvf2img)
+            data_save(self.h5file, self.scaname, self.scanmetadata,
+                      self.dvf2img, devname='dvf2')
 
         t1 = time.time()
         print()
         print(f'Elapsed time [min]: {(t1-t0)/60:.2f}')
 
-    # ------- lens -------- #
+    # def data_save(self):
+    #     """."""
+    #     if self.h5file:
+    #         self.h5file.save_group(grpname=self.scaname,
+    #                                grpmetadata=self.scanmetadata)
+    #         self.h5file.save_dataset(grpname=self.scaname,
+    #                                  dsetname='dvf2',
+    #                                  dsetdata=self.dvf2img
+    #                                  dsetmetadata=self.metadata
+    #                                  )
+
+
+# ------- lens -------- #
+
+class CAXLensMove:
+    """Class to control lens scan of CAX beamline."""
+
+    def __init__(self, filename=None, filedir=None, positions_number=100):
+        """."""
+        self.cax = CAXCtrl()
+        self.devname = 'CAX Lens'
+        self.h5file = (
+            HDF5File(filename, filedir) if filename is not None else None
+            )
+        self.position_number = positions_number
 
     def get_lens_pos(self):
         """."""
@@ -388,40 +518,103 @@ class CAXMirrorMove:
         self.cax.dvf_B1.lens_pos = pos
         # !: waiting time after setting
 
-    def lens_positions(self, n=100):
+    def device_scan(self, positions=None):
         """."""
-        return n
-
-    def scan_lens(self, filename, filedir, positions=None):
-        """."""
-        if positions is None:
-            positions = self.lens_positions()
-
-        file = HDF5File(filename, filedir)
         t0 = time.time()
-
         for i, pos in enumerate(positions):
-            print(f"Step {i+1}/{len(positions)} -"
+            print(f"Step {i+1}/{self.position_number} -"
                 f" Moving lens to position {pos}")
             self.set_lens_pos(pos)
-            scaname = f'scan-{i:04d}'
-            scanmetadata = {
-                'lens_pos': self.get_lens_pos(),
-            }
 
-            dvf2img = utils.get_image(dvf=self.cax.dvf_B1)
-            dvf2metadata = {
+            # Structured data saving.
+            self.scaname     = f'scan-{i:04d}'
+            self.dvf2img     = utils.get_image(dvf=self.cax.dvf_B1)
+            self.setmetadata = {
+                'lens_pos'         : self.get_lens_pos(),
                 'exposure_time'    : self.cax.dvf_B1.exposure_time,
                 'acquisition_time' : self.cax.dvf_B1.acquisition_time
             }
-
-            file.save_group(grpname=scaname, grpmetadata=scanmetadata)
-            file.save_dataset(grpname=scaname, dsetname='dvf2',
-                            dsetmetadata=dvf2metadata, dsetdata=dvf2img)
+            data_save(self.h5file, self.scaname, self.setmetadata,
+                      self.dvf2img, devname='dvf2')
 
         t1 = time.time()
         print()
         print(f'Elapsed time [min]: {(t1-t0)/60}')
+
+    # def data_save(self):
+    #     """."""
+    #     self.h5file.save_group(grpname=self.scaname,
+    #                            grpmetadata=self.scanmetadata)
+    #     self.h5file.save_dataset(grpname=self.scaname,
+    #                              dsetname='dvf2',
+    #                              dsetmetadata=self.dvf2metadata,
+    #                              dsetdata=self.dvf2img)
+
+
+@staticmethod
+def cax_current_config(cax: CAXCtrl):
+    """."""
+    current_config = dict()
+
+    slit_1 = {
+        'top'    : cax.slit_A1.top_pos,
+        'bottom' : cax.slit_A1.bottom_pos,
+        'left'   : cax.slit_A1.left_pos,
+        'right'  : cax.slit_A1.right_pos
+    }
+
+    slit_2 = {
+        'top'    : cax.slit_B1.top_pos,
+        'bottom' : cax.slit_B1.bottom_pos,
+        'left'   : cax.slit_B1.left_pos,
+        'right'  : cax.slit_B1.right_pos
+    }
+
+    dvf_1 = {
+        'acq_time'  : cax.dvf_A1.acquisition_time,
+        'expo_time' : cax.dvf_A1.exposure_time
+    }
+
+    dvf_2 = {
+        'acq_time'  : cax.dvf_A1.acquisition_time,
+        'expo_time' : cax.dvf_B1.exposure_time,
+        'z_pos'     : cax.dvf_B1.z_pos
+    }
+
+    mirror = {
+        'ry'        : cax.mirror.ry_pos,
+        'tx'        : cax.mirror.tx_pos,
+        'y1'        : cax.mirror.y1_pos,
+        'y2'        : cax.mirror.y2_pos,
+        'y3'        : cax.mirror.y3_pos,
+        'photocollector': cax.mirror.photocurrent_signal,
+    }
+
+    current_config['slit1']  = slit_1
+    current_config['dvf1']   = dvf_1
+    current_config['slit2']  = slit_2
+    current_config['dvf2']   = dvf_2
+    current_config['mirror'] = mirror
+
+    return current_config
+
+
+@staticmethod
+def data_save(h5file, scaname, setmetadata, dvfimg, devname='dvf'):
+    """."""
+    if h5file:
+        h5file.save_group(grpname=scaname)
+        h5file.save_dataset(grpname=scaname,
+                            dsetdata=dvfimg,
+                            dsetname=devname,
+                            dsetmetadata=setmetadata)
+
+
+@staticmethod
+def config_save(cax: CAXCtrl, h5file: HDF5File):
+    """."""
+    config = utils.cax_current_config(cax)
+    h5file.save_group(grpname='beamline_config', grpmetadata=config)
 
 
 # define a frame for slit where slit blade right and left

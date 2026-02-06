@@ -32,29 +32,29 @@ LEFTMID = (LEFTMIN + LEFTMAX)/2
 RIGHTMID = (RIGHTMIN + RIGHTMAX)/2
 
 
-
-
-
-
-## analysis functions ##
-
+# ## analysis functions ##
 
 
 def fwhm_quick(data):
+    """Calculate full width at half maximum quickly."""
+    data = np.asarray(data)
     threshold = 0.5*np.max(data)
     mask = data > threshold
     return np.sum(mask) * SCALE
 
+
 def peak(data):
+    """Calculate peak value."""
     return np.max(data)
 
+
 def position(data):
+    """Calculate position of the peak."""
     return np.argmax(data) * SCALE
 
 
-
-
 def full_width(data, coords=None, hfactor=0.5):
+    """Calculate full width at given height factor."""
     data = np.asarray(data)
     if coords is None:
         coords = np.arange(data.size)
@@ -77,9 +77,9 @@ def full_width(data, coords=None, hfactor=0.5):
     return width, zeros
 
 
-
 def caustic_func(z, z0, amp, s0):
-    """
+    """Calculate caustic function.
+
     z: propagation position [m]
     z0: waist position [m]
     amp: amplitude [m]
@@ -87,7 +87,9 @@ def caustic_func(z, z0, amp, s0):
     """
     return amp * np.sqrt( 1 + ((z-z0)/s0)**2 )
 
+
 def caustic_processing(params, positions):
+    """Process caustic scan results."""
     z = np.linspace(positions[0], positions[-1], 2000)
     widthscfit = caustic_func(z, *params)
 
@@ -98,17 +100,14 @@ def caustic_processing(params, positions):
     return z0, dof, zr
 
 
-
-## beamline functions ##
-
-
-CAX = CAXCtrl()
+# # beamline functions ##
 
 
-MAXERRORCOUNT = 5
+# CAX = CAXCtrl()
+
 
 def get_image(dvf: DVF):
-
+    """Get image from DVF with retries on failure."""
     count = 0
     while count < MAXERRORCOUNT:
         try:
@@ -122,45 +121,46 @@ def get_image(dvf: DVF):
             if count < MAXERRORCOUNT:
                 print("\n Repeating the procedure...\n")
             else:
-                raise Exception("Client exception")
+                raise Exception("Client exception") from err
 
 
-
-def current_config():
+def current_config(cax: CAXCtrl):
+    """Get current beamline configuration as a dictionary."""
     return {
         'slit1': {
-            'top': CAX.slit_A1.top_pos,
-            'bottom': CAX.slit_A1.bottom_pos,
-            'left': CAX.slit_A1.left_pos,
-            'right': CAX.slit_A1.right_pos
+            'top': cax.slit_A1.top_pos,
+            'bottom': cax.slit_A1.bottom_pos,
+            'left': cax.slit_A1.left_pos,
+            'right': cax.slit_A1.right_pos
         },
         'dvf1': {
-            'acq_time': CAX.dvf_A1.acquisition_time,
-            'expo_time': CAX.dvf_A1.exposure_time
+            'acq_time': cax.dvf_A1.acquisition_time,
+            'expo_time': cax.dvf_A1.exposure_time
         },
         'slit2': {
-            'top': CAX.slit_B1.top_pos,
-            'bottom': CAX.slit_B1.bottom_pos,
-            'left': CAX.slit_B1.left_pos,
-            'right': CAX.slit_B1.right_pos
+            'top': cax.slit_B1.top_pos,
+            'bottom': cax.slit_B1.bottom_pos,
+            'left': cax.slit_B1.left_pos,
+            'right': cax.slit_B1.right_pos
         },
         'dvf2': {
-            'acq_time': CAX.dvf_A1.acquisition_time,
-            'expo_time': CAX.dvf_B1.exposure_time,
-            'z_pos': CAX.dvf_B1.z_pos
+            'acq_time': cax.dvf_A1.acquisition_time,
+            'expo_time': cax.dvf_B1.exposure_time,
+            'z_pos': cax.dvf_B1.z_pos
         },
         'mirror': {
-            'ry': CAX.mirror.ry_pos,
-            'tx': CAX.mirror.tx_pos,
-            'y1': CAX.mirror.y1_pos,
-            'y2': CAX.mirror.y2_pos,
-            'y3': CAX.mirror.y3_pos,
-            'photocollector': CAX.mirror.photocurrent_signal
+            'ry': cax.mirror.ry_pos,
+            'tx': cax.mirror.tx_pos,
+            'y1': cax.mirror.y1_pos,
+            'y2': cax.mirror.y2_pos,
+            'y3': cax.mirror.y3_pos,
+            'photocollector': cax.mirror.photocurrent_signal
         }
     }
 
-def save_beamline_config(filename, filedir):
 
+def save_beamline_config(filename, filedir):
+    """Save current beamline configuration to a JSON file."""
     file = '/'.join([filedir,filename])
     if file.split('.')[-1] != 'json':
         file += '.json'
