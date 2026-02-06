@@ -35,14 +35,59 @@ SCAN_TYPES = {
 }
 
 
+def parameters_ask(scantype: str):
+    """Get scan parameters from user."""
+    st = SCAN_TYPES[scantype]
+    scanset = dict()
+    print(f"###\n###  {st} scan parameters\n###\n")
+    scanset['start']  = float(input(
+        f"Enter start {st} position/angle: "
+        ))
+    scanset['stop']   = float(input(
+        f"Enter stop {st} position/angle: "
+        ))
+    scanset['nsteps'] = float(input(
+        f"Enter number of steps for scanning: "
+        ))
+    scanset['dtime']  = float(input(
+        "Enter dwell time at each position (seconds): "
+        ))
+    return scanset
+
+
+def status_show(caxdev):
+    """Show current status of the device."""
+    print(f"\n##### {caxdev.devname} #####")
+    status = caxdev.device_status()
+
+    # DEBUG
+    # print(f"\n>>>\n DEBUG: status dict: {status} \n<<<\n")
+    # END DEBUG
+
+    for key, val in status.items():
+        print(f"\n -- {key.replace('_', ' ').title()}:\n")
+        try:
+            for pv, vs in val.items():
+                print(f"  * {pv:15} : ", end="")
+                for v in vs:
+                    print(f"{v:.6f}, ", end="")
+                print()
+        except:
+            for bl, v in val:
+                print(f"  * {bl:15} : {v:10.4f}")
+    print("\n#####\n")
+
+
 class DeviceMove:
     """."""
 
-    def __init__(self, scantype: int, caxdev):
+    def __init__(self, scantype: int, caxdev, scanset=None):
         """."""
-        self.cax  = caxdev.cax
+        self.caxdev  = caxdev
         self.cmov = caxdev.scan_function(scantype)
         self.scantype = scantype
+        self.sct = SCAN_TYPES[self.scantype]
+        self.scanset = scanset
 
     def device_scan(self):
         """."""
@@ -51,28 +96,30 @@ class DeviceMove:
             if not status:
                 raise Exception(
                     " ERROR : while executing "
-                    f"{SCAN_TYPES[self.scantype]} scan:\n"
+                    f"{self.sct} scan:\n"
                     f" >>> {err}"
                     )
         except Exception as err:
-            print(f" ERROR during {SCAN_TYPES[self.scantype]} scan:\n {err}")
+            print(f" ERROR during {self.sct} scan:\n {err}")
             return None
 
+        print(f" >>>>> {self.sct} scanning end time: {datetime.ctime(datetime.now())}\n")
         return results
 
     def scan_watch(self):
         """Status of movement."""
-        sct = SCAN_TYPES[self.scantype]
-        print(f"\n\n >>>>> Starting {sct} scan... ")
-        print(f" >>>>> Init time: {datetime.ctime}\n")
+        print(f"\n\n >>>>> Starting {self.sct} scan... ")
+        print(f" >>>>> Init time: {datetime.ctime(datetime.now())}\n")
 
-        for pos in np.linspace(self.start, self.stop, self.nsteps):
-            print(f" Setting {sct} angle/position to {pos}... ", end="")
+        for pos in np.linspace(self.scanset['start'],
+                               self.scanset['stop'],
+                               self.scanset['nsteps']):
+            print(f" Setting {self.sct} angle/position to {pos}... ", end="")
             try:
                 results = self.cmov(pos)
             except Exception as err:
                 return False, err, None
-            time.sleep(self.dtime)
+            time.sleep(self.scanset['dtime'])
             print(" done.")
 
         # Return: result status, error status, results
@@ -111,52 +158,73 @@ class CAXMirrorMove:
 
     def device_status(self):
         """Show initial statuts of mirror."""
-        motor_descr = {
+        raw_motor_descr = {
             'TX' : 'x position',
-            'TY' : 'y position',
-            'RX' : 'x angle'   ,
-            'RY' : 'y angle'   ,
-            'RZ' : 'z angle'   ,
+            'RY' : 'y rotation'   ,
             'Y1' : 'leveler Z-',
             'Y2' : 'leveler X+',
             'Y3' : 'leveler Z+',
         }
-        motor_list = list(motor_descr.keys())
+        r_motor_list = list(raw_motor_descr.keys())
+        #
+        kin_motor_descr = {
+            'CS_RX' : 'x rotation'   ,
+            'CS_RY' : 'y rotation'   ,
+            'CS_RZ' : 'z rotation'   ,
+            'CS_TX' : 'x position',
+            'CS_TY' : 'y position',
+        }
+        k_motor_list = list(kin_motor_descr.keys())
 
-        raw_motor  = {motor_descr[k] : [] for k in motor_list}
-        kin_motor  = {motor_descr[k] : [] for k in motor_list}
+        raw_motor  = {
+            raw_motor_descr[k] : [] for k in r_motor_list
+            }
+        kin_motor  = {
+            kin_motor_descr[k] : [] for k in k_motor_list
+            }
+
         dev_status = dict()
         count = 0
 
-        # DEBUG
-        # print("\n>>>\n DEBUG: vars(self.m1.PVS).items(): "
-        #       f"{vars(self.m1.PVS).keys()} \n<<<\n")
-        # END DEBUG
-
         # Get PVs.
         for key, val in vars(self.m1.PVS).items():
-            pv = key.strip('CS').split('_')
-            kn = key.split('_')[0]
+            pv = key.split('_')
 
-            if len(pv) < 2:
+            # Re-assemble PV name if kinematics.
+            if pv[0] == 'CS':
+                pv[0] = '_'.join(pv[:2])
+                pv.pop(1)
+
+            # Skip if PV name is not relevant for mirror status.
+            if (len(pv) < 2 or
+                pv[0] not in r_motor_list + k_motor_list or
+                pv[1] not in ['MON', 'ENBL']):
                 continue
 
-            # Select PVs: raw motors or kinematics.
-            if pv[0] in motor_list:
-                v = self.m1[val]
-                md = motor_descr[pv[0]]
-                if pv[1] in ['MON', 'ENBL']:
-                    if kn == 'CS':
-                        kin_motor[md].append(v)
-                    else:
-                        raw_motor[md].append(v)
+            # Motor description and value.
+            motval  = self.m1[val]
+
+            # Select PVs: read back value and enabled status.
+            if pv[1] in ['MON', 'ENBL']:
+                # Select PVs: raw motors or kinematics.
+                if pv[0] in r_motor_list:
+                    motdesc = raw_motor_descr[pv[0]]
+                    raw_motor[motdesc].append(motval)
+                elif pv[0] in k_motor_list:
+                    motdesc = kin_motor_descr[pv[0]]
+                    kin_motor[motdesc].append(motval)
 
                 # Show progress bar, for some checkings may be slow.
                 count = self.progress_bar(self.devname, count, key)
 
+        # Populate status dict.
         dev_status['raw_motor']  = raw_motor
         dev_status['kinematics'] = kin_motor
-        print(" done.\n")
+
+        # Done.
+        print(f"\r Scanning {self.devname} status..."
+              " done.            ", flush=True)
+
         return dev_status
 
     def progress_bar(self, devname, count, pv):
@@ -434,9 +502,28 @@ class CAXCausticMove:
         """."""
         self.cax = CAXCtrl()
         self.devname = 'CAX Caustic'
+        self.scan_function = self.caustic_scan
+        self.caustic_scan_settings()
 
         self.h5file = (
             HDF5File(filename, filedir) if filename is not None else None
+            )
+
+    def caustic_scan_settings(self):
+        """."""
+        print("\n ** Settings")
+        status_show(self)
+
+        # Set start, stop, nsteps, dtime.
+        caustic_settings = parameters_ask('6')
+        self.start  = caustic_settings['start']
+        self.stop   = caustic_settings['stop']
+        self.nsteps = caustic_settings['nsteps']
+        self.dtime  = caustic_settings['dtime']
+
+        # Set scan positions.
+        self.detector_positions_scan = np.linspace(
+            self.start, self.stop, self.nsteps
             )
 
     def device_status(self):
@@ -453,17 +540,13 @@ class CAXCausticMove:
         """."""
         return self.cax.dvf_B1.z_pos
 
-    def detector_positions(self, nsteps=100):
-        """."""
-        return np.linspace(ZPOSMAX, ZPOSMIN, nsteps)
-
-    def caustic_scan(self, positions=None):
+    def caustic_scan(self):
         """."""
         # saving beamline state before the scan
         utils.config_save(self.cax, self.h5file)
 
-        if positions is None:
-            positions = self.detector_positions()
+        # Get scanning positions.
+        positions = self.detector_positions_scan
 
         t0 = time.time()
         for i, pos in enumerate(positions):

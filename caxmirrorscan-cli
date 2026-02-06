@@ -43,36 +43,51 @@ def scan_menu_select():
         else:
             caxdev = CAXSlitMove()
         caxdevs.append(caxdev)
+
     return set(choices), set(caxdevs)
 
 
-def status_show(caxdev):
-    """Show current status of the device."""
-    print(f"\n##### {caxdev.devname} #####")
-    status = caxdev.device_status()
+# def status_show(caxdev):
+#     """Show current status of the device."""
+#     print(f"\n##### {caxdev.devname} #####")
+#     status = caxdev.device_status()
 
-    # DEBUG
-    print(f"\n>>>\n DEBUG: status dict: {status} \n<<<\n")
-    # END DEBUG
+#     # DEBUG
+#     # print(f"\n>>>\n DEBUG: status dict: {status} \n<<<\n")
+#     # END DEBUG
 
-    for key, val in status.items():
-        print(f"\n -- {key.replace('_', ' ').title()}:\n")
-        for pv, v in val.items():
-            print(f"  * {pv:15} ({v[1]:>8}) : {v[0]:10.4f}")
-    print("\n#####\n")
+#     for key, val in status.items():
+#         print(f"\n -- {key.replace('_', ' ').title()}:\n")
+#         try:
+#             for pv, vs in val.items():
+#                 print(f"  * {pv:15} : ", end="")
+#                 for v in vs:
+#                     print(f"{v:.6f}, ", end="")
+#                 print()
+#         except:
+#             for bl, v in val:
+#                 print(f"  * {bl:15} : {v:10.4f}")
+#     print("\n#####\n")
 
 
-def parameters_ask(scantype: str):
-    """Get scan parameters from user."""
-    st = SCAN_TYPES[scantype]
-    print(f"###\n###  {st} scan parameters\n###\n")
-    start  = float(input(f"Enter start {st} position/angle (urad): "))
-    stop   = float(input(f"Enter stop {st} position/angle (urad): "))
-    nsteps = float(input(f"Enter {st} number of steps: "))
-    dtime  = float(input(
-        "Enter dwell time at each position (seconds): "
-        ))
-    return start, stop, nsteps, dtime
+# def parameters_ask(scantype: str):
+#     """Get scan parameters from user."""
+#     st = SCAN_TYPES[scantype]
+#     scanset = dict()
+#     print(f"###\n###  {st} scan parameters\n###\n")
+#     scanset['start']  = float(input(
+#         f"Enter start {st} position/angle: "
+#         ))
+#     scanset['stop']   = float(input(
+#         f"Enter stop {st} position/angle: "
+#         ))
+#     scanset['nsteps'] = float(input(
+#         f"Enter number of steps for scanning: "
+#         ))
+#     scanset['dtime']  = float(input(
+#         "Enter dwell time at each position (seconds): "
+#         ))
+#     return scanset
 
 
 def show_results(results, scantype: str):
@@ -108,21 +123,17 @@ def main():
     scantype, caxdevs = scan_menu_select()
 
     # DEBUG: Show status of each device.
-    # print(f"\n SCAN TYPES = {SCAN_TYPES}\n")
+    print(f"\n SCAN TYPES = {SCAN_TYPES}\n caxdevs = {caxdevs}\n\n", flush=True)
     # END DEBUG
 
-    print("\n\n##### Current Status of Selected Devices #####")
-
-    # print("Selected scan types:\n"
-    #       f" {', '.join([SCAN_TYPES[st] for st in scantype])}\n")
-
+    # Show first current status of selected devices.
+    print("\n\n\n##### Current Status of Selected Devices #####")
     for caxdev in caxdevs:
-        # print(f"\n--- {caxdev.devname} ---")
         status_show(caxdev)
-        # print("\n-----------------------\n")
+        sctype  = SCAN_TYPES[caxdev.scantype]
+        # scanset = parameters_ask(sctype)
+        results = DeviceMove.device_scan(sctype, caxdev)
     return
-
-    results  = DeviceMove.device_scan(scantype, caxdevs)
 
     # Show and/or record results.
     if results is not None:
