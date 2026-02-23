@@ -16,35 +16,44 @@ from caxscripts.motormov import (
 
 def scan_menu_select():
     """Select scan type from a menu."""
-    print("Select scan (type a list of numbers separated by spaces):\n")
+    print("\nSelect scan (type a list of numbers separated by spaces):\n")
     for key, value in SCAN_TYPES.items():
         print(f"  {key} - {value} scan")
 
     caxdevs = list()
-    while True:
-        choices = input("\n Enter choice [1-9], 'q' to quit: ")
-        if choices.lower() == 'q':
-            print("Exiting... Done.")
-            exit(0)
-        choices = choices.strip().split()
-        for choice in choices:
-            if choice not in ['1', '2', '3', '4', '5', '6', '7', '8', '9']:
-                print("Invalid choice."
-                    " Please enter a number between 1 and 9.")
-                break
-        else:
-            break
+    choices = input("\n Enter choice [1-9], 'q' to quit: ")
 
+    # Quit
+    if choices.lower() == 'q':
+        print("Exiting... Done.")
+        exit(0)
+
+    # Validate choices and create corresponding device move instances.
+    choices = choices.strip().split()
     for choice in choices:
-        if choice in ['1', '2', '3', '4', '5']:
-            caxdev = CAXMirrorMove()
-        elif choice in ['6', '7']:
-            caxdev = CAXCausticMove()
-        else:
-            caxdev = CAXSlitMove()
-        caxdevs.append(caxdev)
+        try:
+            if choice not in SCAN_TYPES:
+                raise ValueError("Invalid choice")
+            # Type of scan.
+            if choice in list(map(str, range(1, 6))):
+                caxdev = CAXMirrorMove()
+            elif choice in ['6', '7']:
+                caxdev = CAXCausticMove()
+            else:
+                caxdev = CAXSlitMove()
+            caxdevs.append(caxdev)
+        except Exception as err:
+            print(f"{err} -- '{choice}' "
+                " Please enter a number between 1 and 9.")
+            scan_menu_select()  # Restart menu selection
 
-    return set(choices), set(caxdevs)
+    # DEBUG
+    print("\n#####\n##### [DEBUG] Scan Menu Select "
+          f"\n##### User choices: {choices},"
+          f"\n##### CAX devices to scan:\n {caxdevs}\n#####\n\n")
+    # END DEBUG
+
+    return list(set(choices)), list(set(caxdevs))
 
 
 # def status_show(caxdev):
@@ -123,14 +132,15 @@ def main():
     scantype, caxdevs = scan_menu_select()
 
     # DEBUG: Show status of each device.
-    print(f"\n SCAN TYPES = {SCAN_TYPES}\n caxdevs = {caxdevs}\n\n", flush=True)
+    # print(f"\n SCAN TYPES = {SCAN_TYPES}\n caxdevs = {caxdevs}\n\n",
+    #       flush=True)
     # END DEBUG
 
     # Show first current status of selected devices.
     print("\n\n\n##### Current Status of Selected Devices #####")
-    for caxdev in caxdevs:
-        status_show(caxdev)
-        sctype  = SCAN_TYPES[caxdev.scantype]
+    for st, caxdev in zip(scantype, caxdevs, strict=False):
+        # status_show(caxdev)
+        sctype  = SCAN_TYPES[st]
         # scanset = parameters_ask(sctype)
         results = DeviceMove.device_scan(sctype, caxdev)
     return

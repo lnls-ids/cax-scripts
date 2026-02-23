@@ -1,3 +1,4 @@
+"""Utility functions for CAX mirror scanning scripts."""
 
 import time
 import json
@@ -5,15 +6,15 @@ import numpy as np
 from siriuspy.devices import CAXCtrl, DVF
 
 
-## parameters ##
+# # parameters ##
 
 # dvf
 SCALE = 1     # [um/px]
 MAXERRORCOUNT = 5
 
 # ry
-STEP = 0.0001 # [mm]
-DELAY = 2     # [s]
+STEP = 0.0001  # [mm]
+DELAY = 2      # [s]
 
 # slit1 limits
 TOPMAX = 19.8
@@ -85,7 +86,7 @@ def caustic_func(z, z0, amp, s0):
     amp: amplitude [m]
     s0: spread factor [m]
     """
-    return amp * np.sqrt( 1 + ((z-z0)/s0)**2 )
+    return amp * np.sqrt(1 + ((z-z0)/s0)**2)
 
 
 def caustic_processing(params, positions):
@@ -161,7 +162,7 @@ def current_config(cax: CAXCtrl):
 
 def save_beamline_config(filename, filedir):
     """Save current beamline configuration to a JSON file."""
-    file = '/'.join([filedir,filename])
+    file = '/'.join([filedir, filename])
     if file.split('.')[-1] != 'json':
         file += '.json'
 

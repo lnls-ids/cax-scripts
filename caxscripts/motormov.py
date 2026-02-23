@@ -47,7 +47,7 @@ def parameters_ask(scantype: str):
         f"Enter stop {st} position/angle: "
         ))
     scanset['nsteps'] = float(input(
-        f"Enter number of steps for scanning: "
+        "Enter number of steps for scanning: "
         ))
     scanset['dtime']  = float(input(
         "Enter dwell time at each position (seconds): "
@@ -72,7 +72,7 @@ def status_show(caxdev):
                 for v in vs:
                     print(f"{v:.6f}, ", end="")
                 print()
-        except:
+        except Exception:
             for bl, v in val:
                 print(f"  * {bl:15} : {v:10.4f}")
     print("\n#####\n")
@@ -103,7 +103,8 @@ class DeviceMove:
             print(f" ERROR during {self.sct} scan:\n {err}")
             return None
 
-        print(f" >>>>> {self.sct} scanning end time: {datetime.ctime(datetime.now())}\n")
+        print(f" >>>>> {self.sct} scanning end time:"
+              f" {datetime.ctime(datetime.now())}\n")
         return results
 
     def scan_watch(self):
@@ -247,11 +248,11 @@ class CAXMirrorMove:
         for i, pos in enumerate(positions):
             print(f"Step: {i+1}/{len(positions)} -"
                 f" Moving mirror {motor} to position {pos}")
-            self.set_mirror_pos(motor, pos)
+            self.m1.move(motor, pos)
 
             scaname = f'scan-{i:04d}'
             scanmetadata = {
-                f'{motor}_pos'     : self.get_mirror_pos(motor),
+                motor              : getattr(self.m1, motor),
                 'photocollector'   : self.cax.mirror.photocurrent_signal,
             }
 
@@ -298,20 +299,20 @@ class CAXMirrorMove:
 
     def get_mirror_real(self):
         """."""
-        ry, tx, y1, y2, y3 = (self.m1.ry_pos,
-                              self.m1.tx_pos,
-                              self.m1.y1_pos,
-                              self.m1.y2_pos,
-                              self.m1.y3_pos)
+        ry, tx, y1, y2, y3 = (self.m1.ry,
+                              self.m1.tx,
+                              self.m1.y1,
+                              self.m1.y2,
+                              self.m1.y3)
         return ry, tx, y1, y2, y3
 
     def set_mirror_real(self, ry, tx, y1, y2, y3):
         """."""
-        self.m1.ry_pos = ry
-        self.m1.tx_pos = tx
-        self.m1.y1_pos = y1
-        self.m1.y2_pos = y2
-        self.m1.y3_pos = y3
+        self.m1.ry = ry
+        self.m1.tx = tx
+        self.m1.y1 = y1
+        self.m1.y2 = y2
+        self.m1.y3 = y3
 
     # def get_mirror_virtual(self):
     #     """."""
@@ -323,49 +324,6 @@ class CAXMirrorMove:
     #     """."""
     #     ry, tx, y1, y2, y3 = self.m1kin.inverse_transf(tx, ty, rx, ry, rz)
     #     self.set_mirror_real(ry, tx, y1, y2, y3)
-
-    def get_mirror_pos(self, motor):
-        """."""
-        if motor in ['ty', 'rx', 'rz']:
-            idx_virtualmotor = {
-                'ty' : 1,
-                'rx' : 2,
-                'rz' : 3
-                }[motor]
-            virtualposes = self.get_mirror_virtual()
-            motor_pos = virtualposes[idx_virtualmotor]
-
-        else:
-            # ry or tx or y1 or y2 or y3
-            motor_pos = getattr(self.m1, f'{motor}_pos')
-
-        return motor_pos
-
-    def set_mirror_pos(self, motor, pos):
-        """Move specified real or virtual motor of CARCARA X Mirror.
-
-        Parameters
-        ----------
-        motor : str, {'ry', 'tx', 'y1', 'y2', 'y3', 'rx', 'rz', 'y'}
-            Real or virtual motor name.
-        pos : float
-            Motor position.
-        """
-        if motor in ['ty', 'rx', 'rz']:
-            idx_virtualmotor = {
-                'ty' : 1,
-                'rx' : 2,
-                'rz' : 3
-                }[motor]
-            virtualposes = self.get_mirror_virtual()
-            virtualposes[idx_virtualmotor] = pos
-            self.set_mirror_virtual(*virtualposes)
-
-        else:
-            # ry or tx or y1 or y2 or y3
-            setattr(self.m1, f'{motor}_pos', pos)
-
-        # !: waiting time after setting
 
     # ? what are all possibilities of save during scan?
     # mirror: motor position, photocollector signal
@@ -511,7 +469,7 @@ class CAXCausticMove:
 
     def caustic_scan_settings(self):
         """."""
-        print("\n ** Settings")
+        print("\n ** Caustic scan settings")
         status_show(self)
 
         # Set start, stop, nsteps, dtime.
