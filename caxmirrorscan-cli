@@ -6,12 +6,25 @@
 # import time
 import numpy as np
 import matplotlib.pyplot as plt
+from caxscripts import utils
 
-# from siriuspy.devices import CAXCtrl
+from siriuspy.devices import CAXCtrl
 # from motorkin import M1Kinematics
 from caxscripts.motormov import (
     DeviceMove, CAXMirrorMove, CAXCausticMove, CAXSlitMove, SCAN_TYPES
     )
+
+PV_SCAN_TYPES = {
+    '1': 'tx',
+    '2': 'cs_rx',
+    '3': 'cs_ty',
+    '4': 'ry',
+    '5': 'cs_rz',
+    '6': 'pos_z',
+    '7': 'lens_pos',
+    '8': 'slit_A1',
+    '9': 'slit_B1',
+}
 
 
 def scan_menu_select():
@@ -56,47 +69,57 @@ def scan_menu_select():
     return list(set(choices)), list(set(caxdevs))
 
 
-# def status_show(caxdev):
-#     """Show current status of the device."""
-#     print(f"\n##### {caxdev.devname} #####")
-#     status = caxdev.device_status()
+def status_show(cax):
+    """Show current status of the device."""
+    # Get current status of all devices.
+    status = utils.current_config(cax)
 
-#     # DEBUG
-#     # print(f"\n>>>\n DEBUG: status dict: {status} \n<<<\n")
-#     # END DEBUG
+    # DEBUG: Show raw status dictionary
+    print("\n#####\n##### [DEBUG] Current Status Dictionary:\n")
+    for key, val in status.items():
+        print(f"{key}: {val}\n")
+    print("#####\n\n") 
+    # END DEBUG
 
-#     for key, val in status.items():
-#         print(f"\n -- {key.replace('_', ' ').title()}:\n")
-#         try:
-#             for pv, vs in val.items():
-#                 print(f"  * {pv:15} : ", end="")
-#                 for v in vs:
-#                     print(f"{v:.6f}, ", end="")
-#                 print()
-#         except:
-#             for bl, v in val:
-#                 print(f"  * {bl:15} : {v:10.4f}")
-#     print("\n#####\n")
+    # Run through all devices and print their status.
+    for key, val in status.items():
+        print(f" -- {key.replace('_', ' ').title()}:\n")
+        try:
+            for pv, vs in val.items():
+                print(f"    * {pv:15} : {vs:10.4f}")
+
+                # print(f"  * {pv:12} : ", end="")
+                # enbl = True if vs[1] == 1 else False
+                # print(f"{vs[0]:12.6f}, enabled = {enbl}")
+            print("\n")
+        except Exception:
+            for bl, v in val:
+                print(f"  * {bl:15} : {v:10.4f}")
+    print("\n#####\n")
 
 
-# def parameters_ask(scantype: str):
-#     """Get scan parameters from user."""
-#     st = SCAN_TYPES[scantype]
-#     scanset = dict()
-#     print(f"###\n###  {st} scan parameters\n###\n")
-#     scanset['start']  = float(input(
-#         f"Enter start {st} position/angle: "
-#         ))
-#     scanset['stop']   = float(input(
-#         f"Enter stop {st} position/angle: "
-#         ))
-#     scanset['nsteps'] = float(input(
-#         f"Enter number of steps for scanning: "
-#         ))
-#     scanset['dtime']  = float(input(
-#         "Enter dwell time at each position (seconds): "
-#         ))
-#     return scanset
+def parameters_ask(scantype: str, caxdev):
+    """Get scan parameters from user."""
+    # Parameter limits.
+    print("\n\n** Parameter limits:")
+    print()
+
+    st = SCAN_TYPES[scantype]
+    scanset = dict()
+    print(f"###\n###  {st} scan parameters\n###\n")
+    scanset['start']  = float(input(
+        f"Enter start {st} position/angle: "
+        ))
+    scanset['stop']   = float(input(
+        f"Enter stop {st} position/angle: "
+        ))
+    scanset['nsteps'] = float(input(
+        "Enter number of steps for scanning: "
+        ))
+    scanset['dtime']  = float(input(
+        "Enter dwell time at each position (seconds): "
+        ))
+    return scanset
 
 
 def show_results(results, scantype: str):
@@ -120,9 +143,10 @@ def main():
     # END DEBUG
 
     # Initialize control.
-    # caxctrl = CAXCtrl()
-    # caxmov  = CAXMirrorMove(caxctrl)
-    # m1kin   = M1Kinematics()
+    cax = CAXCtrl()
+
+    # Show status of devices.
+    status_show(cax)
 
     # Current status.
     print("\n\n#####\n##### Carcará Scanning System\n#####\n")
@@ -137,12 +161,17 @@ def main():
     # END DEBUG
 
     # Show first current status of selected devices.
-    print("\n\n\n##### Current Status of Selected Devices #####")
-    for st, caxdev in zip(scantype, caxdevs, strict=False):
-        # status_show(caxdev)
-        sctype  = SCAN_TYPES[st]
-        # scanset = parameters_ask(sctype)
-        results = DeviceMove.device_scan(sctype, caxdev)
+    print("\n\n\n##### Current Status of Selected Devices #####\n\n")
+
+    # DEBUG
+    print("\n#####"
+          f"\n##### [DEBUG] scantype = {scantype},"
+          f"\n##### [DEBUG] caxdevs  = {caxdevs}\n#####\n\n")
+    # DEBUG
+
+    for st, caxdev in zip(scantype, caxdevs):  # noqa: B905
+        scanset = parameters_ask(st, caxdev)
+        results = DeviceMove.device_scan(st, caxdev, scanset)
     return
 
     # Show and/or record results.

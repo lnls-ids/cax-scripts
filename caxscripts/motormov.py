@@ -35,87 +35,88 @@ SCAN_TYPES = {
 }
 
 
-def parameters_ask(scantype: str):
-    """Get scan parameters from user."""
-    st = SCAN_TYPES[scantype]
-    scanset = dict()
-    print(f"###\n###  {st} scan parameters\n###\n")
-    scanset['start']  = float(input(
-        f"Enter start {st} position/angle: "
-        ))
-    scanset['stop']   = float(input(
-        f"Enter stop {st} position/angle: "
-        ))
-    scanset['nsteps'] = float(input(
-        "Enter number of steps for scanning: "
-        ))
-    scanset['dtime']  = float(input(
-        "Enter dwell time at each position (seconds): "
-        ))
-    return scanset
+# def parameters_ask(scantype: str):
+#     """Get scan parameters from user."""
+#     st = SCAN_TYPES[scantype]
+#     scanset = dict()
+#     print(f"###\n###  {st} scan parameters\n###\n")
+#     scanset['start']  = float(input(
+#         f"Enter start {st} position/angle: "
+#         ))
+#     scanset['stop']   = float(input(
+#         f"Enter stop {st} position/angle: "
+#         ))
+#     scanset['nsteps'] = float(input(
+#         "Enter number of steps for scanning: "
+#         ))
+#     scanset['dtime']  = float(input(
+#         "Enter dwell time at each position (seconds): "
+#         ))
+#     return scanset
 
 
-def status_show(caxdev):
-    """Show current status of the device."""
-    print(f"\n##### {caxdev.devname} #####")
-    status = caxdev.device_status()
+# def status_show(caxdev):
+#     """Show current status of the device."""
+#     print(f"\n##### {caxdev.devname} #####")
+#     status = caxdev.device_status()
 
-    # DEBUG
-    # print(f"\n>>>\n DEBUG: status dict: {status} \n<<<\n")
-    # END DEBUG
+#     # DEBUG
+#     # print(f"\n>>>\n DEBUG: status dict: {status} \n<<<\n")
+#     # END DEBUG
 
-    for key, val in status.items():
-        print(f"\n -- {key.replace('_', ' ').title()}:\n")
-        try:
-            for pv, vs in val.items():
-                print(f"  * {pv:15} : ", end="")
-                for v in vs:
-                    print(f"{v:.6f}, ", end="")
-                print()
-        except Exception:
-            for bl, v in val:
-                print(f"  * {bl:15} : {v:10.4f}")
-    print("\n#####\n")
+#     for key, val in status.items():
+#         print(f"\n -- {key.replace('_', ' ').title()}:\n")
+#         try:
+#             for pv, vs in val.items():
+#                 print(f"  * {pv:15} : ", end="")
+#                 for v in vs:
+#                     print(f"{v:.6f}, ", end="")
+#                 print()
+#         except Exception:
+#             for bl, v in val:
+#                 print(f"  * {bl:15} : {v:10.4f}")
+#     print("\n#####\n")
 
 
 class DeviceMove:
     """."""
 
-    def __init__(self, scantype: int, caxdev, scanset=None):
+    def __init__(self, scan_number: int, caxdev, scanset=None):
         """."""
-        self.caxdev  = caxdev
-        self.cmov = caxdev.scan_function(scantype)
-        self.scantype = scantype
-        self.sct = SCAN_TYPES[self.scantype]
-        self.scanset = scanset
+        self.caxdev   = caxdev                  # Device to be scanned.
+        self.cmov     = caxdev.scan_function(scan_number)
+        self.nscan    = scan_number
+        self.scantype = SCAN_TYPES[self.nscan]  # Scan procedure.
+        self.scanset  = scanset
 
     def device_scan(self):
         """."""
+        print(f"\n\n >>>>> Starting {self.scantype} scan... ")
+        print(f" >>>>> Init time: {datetime.ctime(datetime.now())}\n")
+
         try:
             status, err, results = self.scan_watch()
             if not status:
                 raise Exception(
                     " ERROR : while executing "
-                    f"{self.sct} scan:\n"
-                    f" >>> {err}"
+                    f"{self.scantype} scan:\n >>> {err}"
                     )
         except Exception as err:
-            print(f" ERROR during {self.sct} scan:\n {err}")
+            print(f" ERROR during {self.scantype} scan:\n {err}")
             return None
 
-        print(f" >>>>> {self.sct} scanning end time:"
+        print(f" >>>>> {self.scantype} scanning end time:"
               f" {datetime.ctime(datetime.now())}\n")
         return results
 
     def scan_watch(self):
         """Status of movement."""
-        print(f"\n\n >>>>> Starting {self.sct} scan... ")
-        print(f" >>>>> Init time: {datetime.ctime(datetime.now())}\n")
-
-        for pos in np.linspace(self.scanset['start'],
-                               self.scanset['stop'],
-                               self.scanset['nsteps']):
-            print(f" Setting {self.sct} angle/position to {pos}... ", end="")
+        scanpoints = np.linspace(self.scanset['start'],
+                                 self.scanset['stop'],
+                                 self.scanset['nsteps'])
+        for pos in scanpoints:
+            print(f" Setting {self.scantype} angle/position to"
+                  f" {pos}... ", end="")
             try:
                 results = self.cmov(pos)
             except Exception as err:
@@ -216,7 +217,7 @@ class CAXMirrorMove:
                     kin_motor[motdesc].append(motval)
 
                 # Show progress bar, for some checkings may be slow.
-                count = self.progress_bar(self.devname, count, key)
+                count = self.progress_bar(count, key)
 
         # Populate status dict.
         dev_status['raw_motor']  = raw_motor
@@ -224,14 +225,14 @@ class CAXMirrorMove:
 
         # Done.
         print(f"\r Scanning {self.devname} status..."
-              " done.            ", flush=True)
+              " done.            \n", flush=True)
 
         return dev_status
 
-    def progress_bar(self, devname, count, pv):
+    def progress_bar(self, count, pv):
         """Show progress bar."""
         pb = ['|', '/', '-', '\\']
-        print(f"\r Scanning {devname}  status ..."
+        print(f"\r Scanning {self.devname}  status ..."
               f" {pb[count % 4]} [{pv}]",
               end="", flush=True)
         return count + 1
@@ -456,24 +457,23 @@ class CAXSlitMove:
 class CAXCausticMove:
     """Class to control caustic scan of CAX beamline."""
 
-    def __init__(self, filename=None, filedir=None):
+    def __init__(self):
         """."""
-        self.cax = CAXCtrl()
+        self.cax     = CAXCtrl()
         self.devname = 'CAX Caustic'
         self.scan_function = self.caustic_scan
         self.caustic_scan_settings()
 
-        self.h5file = (
-            HDF5File(filename, filedir) if filename is not None else None
-            )
+        # self.h5file = (
+        #     HDF5File(filename, filedir) if filename is not None else None
+        #     )
 
-    def caustic_scan_settings(self):
+    def caustic_scan_settings(self, caustic_settings):
         """."""
         print("\n ** Caustic scan settings")
-        status_show(self)
 
         # Set start, stop, nsteps, dtime.
-        caustic_settings = parameters_ask('6')
+        # caustic_settings = parameters_ask('6')
         self.start  = caustic_settings['start']
         self.stop   = caustic_settings['stop']
         self.nsteps = caustic_settings['nsteps']
@@ -501,7 +501,7 @@ class CAXCausticMove:
     def caustic_scan(self):
         """."""
         # saving beamline state before the scan
-        utils.config_save(self.cax, self.h5file)
+        # utils.config_save(self.cax, self.h5file)
 
         # Get scanning positions.
         positions = self.detector_positions_scan

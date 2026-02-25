@@ -127,36 +127,104 @@ def get_image(dvf: DVF):
 
 def current_config(cax: CAXCtrl):
     """Get current beamline configuration as a dictionary."""
-    return {
-        'slit1': {
-            'top': cax.slit_A1.top_pos,
-            'bottom': cax.slit_A1.bottom_pos,
-            'left': cax.slit_A1.left_pos,
-            'right': cax.slit_A1.right_pos
-        },
-        'dvf1': {
-            'acq_time': cax.dvf_A1.acquisition_time,
-            'expo_time': cax.dvf_A1.exposure_time
-        },
-        'slit2': {
-            'top': cax.slit_B1.top_pos,
-            'bottom': cax.slit_B1.bottom_pos,
-            'left': cax.slit_B1.left_pos,
-            'right': cax.slit_B1.right_pos
-        },
-        'dvf2': {
-            'acq_time': cax.dvf_A1.acquisition_time,
-            'expo_time': cax.dvf_B1.exposure_time,
-            'z_pos': cax.dvf_B1.z_pos
-        },
-        'mirror': {
-            'ry': cax.mirror.ry_pos,
-            'tx': cax.mirror.tx_pos,
-            'y1': cax.mirror.y1_pos,
-            'y2': cax.mirror.y2_pos,
-            'y3': cax.mirror.y3_pos,
-            'photocollector': cax.mirror.photocurrent_signal
+    caxm  = cax.mirror
+    mirror_status = {
+            'tx'            : [caxm.tx_mon,
+                               caxm.tx_lolm,
+                               caxm.tx_hilm,
+                               caxm.tx_enbl],
+            'ry'            : [caxm.ry_mon,
+                               caxm.ry_lolm,
+                               caxm.ry_hilm,
+                               caxm.ry_enbl],
+            'y1'            : [caxm.y1_mon,
+                               caxm.y1_lolm,
+                               caxm.y1_hilm,
+                               caxm.y1_enbl],
+            'y2'            : [caxm.y2_mon,
+                               caxm.y2_lolm,
+                               caxm.y2_hilm,
+                               caxm.y2_enbl],
+            'y3'            : [caxm.y3_mon,
+                               caxm.y3_lolm,
+                               caxm.y3_hilm,
+                               caxm.y3_enbl],
+            'rx'            : [caxm.cs_rx_mon,
+                               caxm.cs_rx_lolm,
+                               caxm.cs_rx_hilm,
+                               caxm.cs_rx_enbl],
+            'rz'            : [caxm.cs_rz_mon,
+                               caxm.cs_rz_lolm,
+                               caxm.cs_rz_hilm,
+                               caxm.cs_rz_enbl],
+            'ty'            : [caxm.cs_ty_mon,
+                               caxm.cs_ty_lolm,
+                               caxm.cs_ty_hilm,
+                               caxm.cs_ty_enbl],
+            'photocollector': caxm.photocurrent_signal
         }
+
+    caxs1 = cax.slit_A1
+    cpv1  = caxs1.PVS
+    slit1_status = {
+            'top'           : [caxs1.top_pos,
+                               caxs1[cpv1.TOP_LOLM],
+                               caxs1[cpv1.TOP_HILM],
+                               caxs1[cpv1.TOP_ENBL]],
+            'bottom'        : [caxs1.bottom_pos,
+                               caxs1[cpv1.BOTTOM_LOLM],
+                               caxs1[cpv1.BOTTOM_HILM],
+                               caxs1[cpv1.BOTTOM_ENBL]],
+            'left'          : [caxs1.left_pos,
+                               caxs1[cpv1.LEFT_LOLM],
+                               caxs1[cpv1.LEFT_HILM],
+                               caxs1[cpv1.LEFT_ENBL]],
+            'right'         : [caxs1.right_pos,
+                               caxs1[cpv1.RIGHT_LOLM],
+                               caxs1[cpv1.RIGHT_HILM],
+                               caxs1[cpv1.RIGHT_ENBL]]
+        }
+
+    caxs2 = cax.slit_B1
+    cpv2  = caxs2.PVS
+    slit2_status = {
+            'top'           : [caxs2.top_pos,
+                               caxs2[cpv2.TOP_LOLM],
+                               caxs2[cpv2.TOP_HILM],
+                               caxs2[cpv2.TOP_ENBL]],
+            'bottom'        : [caxs2.bottom_pos,
+                               caxs2[cpv2.BOTTOM_LOLM],
+                               caxs2[cpv2.BOTTOM_HILM],
+                               caxs2[cpv2.BOTTOM_ENBL]],
+            'left'          : [caxs2.left_pos,
+                               caxs2[cpv2.LEFT_LOLM],
+                               caxs2[cpv2.LEFT_HILM],
+                               caxs2[cpv2.LEFT_ENBL]],
+            'right'         : [caxs2.right_pos,
+                               caxs2[cpv2.RIGHT_LOLM],
+                               caxs2[cpv2.RIGHT_HILM],
+                               caxs2[cpv2.RIGHT_ENBL]]
+        }
+
+    dvf1  = cax.dvf_A1
+    dvf1_status = {
+            'acq_time'      : dvf1.acquisition_time,
+            'expo_time'     : dvf1.exposure_time
+        }
+
+    dvf2  = cax.dvf_B1
+    dvf2_status = {
+            'acq_time'      : dvf2.acquisition_time,
+            'expo_time'     : dvf2.exposure_time,
+            'z_pos'         : dvf2.z_pos
+        }
+
+    return {
+        'mirror': mirror_status,
+        'slit1': slit1_status,
+        'slit2': slit2_status,
+        'dvf1': dvf1_status,
+        'dvf2': dvf2_status
     }
 
 
