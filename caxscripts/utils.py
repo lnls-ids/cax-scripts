@@ -149,15 +149,19 @@ def current_config(cax: CAXCtrl):
                                caxm.y3_lolm,
                                caxm.y3_hilm,
                                caxm.y3_enbl],
-            'rx'            : [caxm.cs_rx_mon,
+            'cs_rx'         : [caxm.cs_rx_mon,
                                caxm.cs_rx_lolm,
                                caxm.cs_rx_hilm,
                                caxm.cs_rx_enbl],
-            'rz'            : [caxm.cs_rz_mon,
+            'cs_rz'         : [caxm.cs_rz_mon,
                                caxm.cs_rz_lolm,
                                caxm.cs_rz_hilm,
                                caxm.cs_rz_enbl],
-            'ty'            : [caxm.cs_ty_mon,
+            'cs_tx'         : [caxm.cs_tx_mon,
+                               caxm.cs_tx_lolm,
+                               caxm.cs_tx_hilm,
+                               caxm.cs_tx_enbl],
+            'cs_ty'         : [caxm.cs_ty_mon,
                                caxm.cs_ty_lolm,
                                caxm.cs_ty_hilm,
                                caxm.cs_ty_enbl],
@@ -220,11 +224,11 @@ def current_config(cax: CAXCtrl):
         }
 
     return {
-        'mirror': mirror_status,
-        'slit1': slit1_status,
-        'slit2': slit2_status,
-        'dvf1': dvf1_status,
-        'dvf2': dvf2_status
+        'mirror' : mirror_status,
+        'slit1'  : slit1_status,
+        'slit2'  : slit2_status,
+        'dvf1'   : dvf1_status,
+        'dvf2'   : dvf2_status
     }
 
 
@@ -238,3 +242,21 @@ def save_beamline_config(filename, filedir):
 
     with open(file, 'w') as f:
         json.dump(config, f, indent=4)
+
+
+def data_save(h5file, scaname, setmetadata, dvfimg, devname='dvf'):
+    """Save scan data (image + metadata) to an HDF5 group.
+
+    Args:
+        h5file: HDF5File instance (or None to skip saving).
+        scaname: name of the HDF5 group for this scan step.
+        setmetadata: metadata dict attached to the dataset.
+        dvfimg: image array to save.
+        devname: dataset name inside the group.
+    """
+    if h5file:
+        h5file.save_group(grpname=scaname)
+        h5file.save_dataset(
+            grpname=scaname, dsetdata=dvfimg,
+            dsetname=devname, dsetmetadata=setmetadata,
+        )

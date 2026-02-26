@@ -11,7 +11,7 @@ from caxscripts import utils
 from siriuspy.devices import CAXCtrl
 # from motorkin import M1Kinematics
 from caxscripts.motormov import (
-    DeviceMove, CAXMirrorMove, CAXCausticMove, CAXSlitMove, SCAN_TYPES
+    CAXMirrorMove, CAXCausticMove, CAXSlitMove, CAXLensMove, SCAN_TYPES
     )
 
 PV_SCAN_TYPES = {
@@ -33,7 +33,7 @@ def scan_menu_select():
     for key, value in SCAN_TYPES.items():
         print(f"  {key} - {value} scan")
 
-    caxdevs = list()
+    caxmove = list()
     choices = input("\n Enter choice [1-9], 'q' to quit: ")
 
     # Quit
@@ -48,13 +48,7 @@ def scan_menu_select():
             if choice not in SCAN_TYPES:
                 raise ValueError("Invalid choice")
             # Type of scan.
-            if choice in list(map(str, range(1, 6))):
-                caxdev = CAXMirrorMove()
-            elif choice in ['6', '7']:
-                caxdev = CAXCausticMove()
-            else:
-                caxdev = CAXSlitMove()
-            caxdevs.append(caxdev)
+            caxmove.append(PV_SCAN_TYPES[choice])
         except Exception as err:
             print(f"{err} -- '{choice}' "
                 " Please enter a number between 1 and 9.")
@@ -63,10 +57,25 @@ def scan_menu_select():
     # DEBUG
     print("\n#####\n##### [DEBUG] Scan Menu Select "
           f"\n##### User choices: {choices},"
-          f"\n##### CAX devices to scan:\n {caxdevs}\n#####\n\n")
+          f"\n##### CAX devices to scan:\n {caxmove}\n#####\n\n")
     # END DEBUG
 
-    return list(set(choices)), list(set(caxdevs))
+    return list(set(choices)), list(set(caxmove))
+
+
+def device_picker(choice, cax):
+    """Return the device instance for the chosen scan type."""
+    opts = list(PV_SCAN_TYPES.values())
+    if choice in opts[:5]:       # Mirror motors
+        return CAXMirrorMove(cax)
+    elif choice == opts[5]:      # Caustic (z position)
+        return CAXCausticMove(cax)
+    elif choice == opts[6]:      # Lens position
+        return CAXLensMove(cax)
+    elif choice in opts[7:9]:    # Slit positions
+        return CAXSlitMove(cax)
+    else:
+        return None
 
 
 def status_show(cax):
@@ -78,7 +87,7 @@ def status_show(cax):
     print("\n#####\n##### [DEBUG] Current Status Dictionary:\n")
     for key, val in status.items():
         print(f"{key}: {val}\n")
-    print("#####\n\n") 
+    print("#####\n\n")
     # END DEBUG
 
     # Run through all devices and print their status.
@@ -98,7 +107,7 @@ def status_show(cax):
     print("\n#####\n")
 
 
-def parameters_ask(scantype: str, caxdev):
+def parameters_ask(scantype: str):
     """Get scan parameters from user."""
     # Parameter limits.
     print("\n\n** Parameter limits:")
@@ -142,36 +151,40 @@ def main():
     # print(f"\n[DEBUG] Mirror module loaded from: {mirror.__file__}\n")
     # END DEBUG
 
+    # Current status.
+    print("\n\n#####\n##### Carcará Scanning System\n#####\n")
+
     # Initialize control.
     cax = CAXCtrl()
 
     # Show status of devices.
-    status_show(cax)
-
-    # Current status.
-    print("\n\n#####\n##### Carcará Scanning System\n#####\n")
-    # motor_positions(caxmov)
+    print("\n\n\n##### Current Status of Selected Devices #####\n\n")
+    cax_status = status_show(cax)
 
     # Select scan type.
-    scantype, caxdevs = scan_menu_select()
+    scantype = scan_menu_select(cax_status)
 
     # DEBUG: Show status of each device.
     # print(f"\n SCAN TYPES = {SCAN_TYPES}\n caxdevs = {caxdevs}\n\n",
     #       flush=True)
     # END DEBUG
 
-    # Show first current status of selected devices.
-    print("\n\n\n##### Current Status of Selected Devices #####\n\n")
-
     # DEBUG
     print("\n#####"
-          f"\n##### [DEBUG] scantype = {scantype},"
-          f"\n##### [DEBUG] caxdevs  = {caxdevs}\n#####\n\n")
+          f"\n##### [DEBUG] scantype = {scantype}\n#####\n\n")
     # DEBUG
 
-    for st, caxdev in zip(scantype, caxdevs):  # noqa: B905
-        scanset = parameters_ask(st, caxdev)
-        results = DeviceMove.device_scan(st, caxdev, scanset)
+    for st in scantype:  # noqa: B905
+        scanargs = parameters_ask(st)
+        motor_name = PV_SCAN_TYPES[st]
+        dev = device_picker(motor_name, cax)
+        if dev is None:
+            print(f" ERROR: No device found for scan type '{st}'.")
+            continue
+        # Mirror scans need the motor name in scanargs.
+        if isinstance(dev, CAXMirrorMove):
+            scanargs['motor'] = motor_name
+        results = dev.device_scan(scanargs)
     return
 
     # Show and/or record results.
