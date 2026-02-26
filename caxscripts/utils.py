@@ -125,6 +125,103 @@ def get_image(dvf: DVF):
                 raise Exception("Client exception") from err
 
 
+def snapshot_dvf(dvf, *, include_imgproc=False):
+    """Capture a DVF snapshot: image, camera settings, and beam diagnostics.
+
+    Args:
+        dvf: a DVF (or DVFImgProc / CAXDtc) device instance.
+        include_imgproc: if True, read beam-fit PVs (centroid, widths,
+            tilt angle, ellipse sigmas).  Only meaningful for DVFImgProc
+            subclasses.
+
+    Returns:
+        dict with 'image', 'exposure_time', 'acquisition_time', and
+        optionally 'beam' sub-dict.
+    """
+    snap = {
+        'image': get_image(dvf),
+        'exposure_time': dvf.exposure_time,
+        'acquisition_time': dvf.acquisition_time,
+    }
+    if include_imgproc:
+        snap['beam'] = {
+            # --- centroid (1-D Gaussian fit means, in pixels) ---
+            'roix_fit_mean': dvf.roix_fit_mean,
+            'roiy_fit_mean': dvf.roiy_fit_mean,
+            # --- beam widths (1-D Gaussian fit sigmas, in pixels) ---
+            'roix_fit_sigma': dvf.roix_fit_sigma,
+            'roiy_fit_sigma': dvf.roiy_fit_sigma,
+            # --- FWHM of the ROI projections (pixels) ---
+            'roix_fwhm': dvf.roix_fwhm,
+            'roiy_fwhm': dvf.roiy_fwhm,
+            # --- 2-D ellipse fit (from second-moment SVD) ---
+            'fit_angle': dvf.fit_angle,      # tilt angle [deg]
+            'fit_sigma1': dvf.fit_sigma1,    # major-axis sigma [px]
+            'fit_sigma2': dvf.fit_sigma2,    # minor-axis sigma [px]
+            # --- fit quality ---
+            'roix_fit_error': dvf.roix_fit_error,
+            'roiy_fit_error': dvf.roiy_fit_error,
+        }
+    return snap
+
+
+def snapshot_machine_state(cax):
+    """Capture a full machine-state snapshot at the current instant.
+
+    Reads all mirror motor positions, slit blade positions,
+    photocollector signal, both DVF images with camera settings,
+    and beam-fit diagnostics from dvf_B1 (DVFImgProc).
+
+    Returns:
+        dict suitable for storing as one scan-step record.
+    """
+    m1 = cax.mirror
+    s1 = cax.slit_A1
+    s2 = cax.slit_B1
+
+    state = {
+        # --- mirror raw motors ---
+        'mirror': {
+            'tx':  m1.tx_mon,
+            'ry':  m1.ry_mon,
+            'y1':  m1.y1_mon,
+            'y2':  m1.y2_mon,
+            'y3':  m1.y3_mon,
+        },
+        # --- mirror kinematics ---
+        'mirror_kin': {
+            'cs_rx': m1.cs_rx_mon,
+            'cs_rz': m1.cs_rz_mon,
+            'cs_tx': m1.cs_tx_mon,
+            'cs_ty': m1.cs_ty_mon,
+        },
+        # --- photocollector ---
+        'photocollector': m1.photocurrent_signal,
+        # --- slit A1 (before mirror) ---
+        'slit_A1': {
+            'top':    s1.top_pos,
+            'bottom': s1.bottom_pos,
+            'left':   s1.left_pos,
+            'right':  s1.right_pos,
+        },
+        # --- slit B1 (after mirror) ---
+        'slit_B1': {
+            'top':    s2.top_pos,
+            'bottom': s2.bottom_pos,
+            'left':   s2.left_pos,
+            'right':  s2.right_pos,
+        },
+        # --- DVF A1 (plain DVF, no ImgProc) ---
+        'dvf1': snapshot_dvf(cax.dvf_A1, include_imgproc=False),
+        # --- DVF B1 / CAXDtc (DVFImgProc: image + beam diagnostics) ---
+        'dvf2': snapshot_dvf(cax.dvf_B1, include_imgproc=True),
+        # --- DVF B1 motor positions ---
+        'dvf2_z_pos':   cax.dvf_B1.z_pos,
+        'dvf2_lens_pos': cax.dvf_B1.lens_pos,
+    }
+    return state
+
+
 def current_config(cax: CAXCtrl):
     """Get current beamline configuration as a dictionary."""
     caxm  = cax.mirror
@@ -247,6 +344,9 @@ def save_beamline_config(filename, filedir):
 def data_save(h5file, scaname, setmetadata, dvfimg, devname='dvf'):
     """Save scan data (image + metadata) to an HDF5 group.
 
+    .. deprecated:: Use :func:`save_step` instead for step dicts produced
+       by :func:`snapshot_machine_state`.
+
     Args:
         h5file: HDF5File instance (or None to skip saving).
         scaname: name of the HDF5 group for this scan step.
@@ -259,4 +359,82 @@ def data_save(h5file, scaname, setmetadata, dvfimg, devname='dvf'):
         h5file.save_dataset(
             grpname=scaname, dsetdata=dvfimg,
             dsetname=devname, dsetmetadata=setmetadata,
+        )
+
+
+# --- DVF sub-keys that hold images (saved as datasets, not attributes) ---
+_DVF_IMAGE_KEY = 'image'
+
+# Keys inside a step dict whose values are DVF snapshot dicts (contain images).
+_DVF_KEYS = ('dvf1', 'dvf2')
+
+
+def _flatten_dict(d, prefix=''):
+    """Flatten a (possibly nested) dict using '.' as separator.
+
+    Entries whose values are numpy arrays are skipped (images are saved
+    separately as HDF5 datasets).
+    """
+    flat = {}
+    for key, val in d.items():
+        full_key = f'{prefix}{key}' if not prefix else f'{prefix}.{key}'
+        if isinstance(val, dict):
+            flat.update(_flatten_dict(val, prefix=full_key))
+        elif not isinstance(val, np.ndarray):
+            flat[full_key] = val
+    return flat
+
+
+def save_step(h5file, step, step_index=None):
+    """Persist one scan-step dict (from snapshot_machine_state) to HDF5.
+
+    HDF5 layout produced for each step::
+
+        /scan-NNNN                          ← group  (one per step)
+            @step          = 0              ← group attrs: all scalars
+            @scan_type     = 'mirror'       ←   and flat sub-dicts are
+            @mirror.tx     = 1.234          ←   flattened with '.' separator
+            @slit_A1.top   = 19.5
+            ...
+            dvf1           (dataset)        ← gzip-compressed image array
+                @exposure_time    = 0.01    ← dataset attrs: DVF scalars
+                @acquisition_time = 0.05
+            dvf2           (dataset)        ← gzip-compressed image array
+                @exposure_time    = 0.01
+                @beam.fit_angle   = 12.3    ← beam sub-dict flattened
+                ...
+
+    Args:
+        h5file: HDF5File instance (or None to skip saving).
+        step: dict as returned by ``device_scan`` (step index +
+            :func:`snapshot_machine_state` keys).
+        step_index: explicit step number for the group name.  If *None*,
+            ``step.get('step', 0)`` is used.
+    """
+    if not h5file:
+        return
+
+    idx = step_index if step_index is not None else step.get('step', 0)
+    grpname = f'scan-{idx:04d}'
+
+    # --- Separate DVF dicts (contain images) from everything else ---
+    non_dvf = {k: v for k, v in step.items() if k not in _DVF_KEYS}
+    grp_attrs = _flatten_dict(non_dvf)
+
+    h5file.save_group(grpname=grpname, grpmetadata=grp_attrs)
+
+    # --- Save each DVF as a dataset inside the group ---
+    for dvf_key in _DVF_KEYS:
+        dvf_dict = step.get(dvf_key)
+        if dvf_dict is None:
+            continue
+        image = dvf_dict[_DVF_IMAGE_KEY]
+        dset_attrs = _flatten_dict(
+            {k: v for k, v in dvf_dict.items() if k != _DVF_IMAGE_KEY}
+        )
+        h5file.save_dataset(
+            grpname=grpname,
+            dsetname=dvf_key,
+            dsetdata=image,
+            dsetmetadata=dset_attrs,
         )

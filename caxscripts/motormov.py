@@ -106,22 +106,8 @@ class CAXMirrorMove:
             self.m1.move(motor, pos)
             time.sleep(scanargs.get('dtime', 0))
 
-            step = {
-                'step': i,
-                'motor': motor,
-                'position': getattr(self.m1, f"{motor}_mon"),
-                'photocollector': self.m1.photocurrent_signal,
-                'dvf1': {
-                    'image': utils.get_image(dvf=self.cax.dvf_A1),
-                    'exposure_time': self.cax.dvf_A1.exposure_time,
-                    'acquisition_time': self.cax.dvf_A1.acquisition_time,
-                },
-                'dvf2': {
-                    'image': utils.get_image(dvf=self.cax.dvf_B1),
-                    'exposure_time': self.cax.dvf_B1.exposure_time,
-                    'acquisition_time': self.cax.dvf_B1.acquisition_time,
-                },
-            }
+            step = {'step': i, 'scan_type': 'mirror', 'scan_motor': motor}
+            step.update(utils.snapshot_machine_state(self.cax))
             results.append(step)
 
         elapsed = (time.time() - t0) / 60
@@ -271,24 +257,8 @@ class CAXSlitMove:
                                   posx - sqsize/2, posx + sqsize/2)
                 time.sleep(scanargs.get('dtime', 0))
 
-                step = {
-                    'step_row': i,
-                    'step_col': j,
-                    'slit_top': slit.top_pos,
-                    'slit_bottom': slit.bottom_pos,
-                    'slit_left': slit.left_pos,
-                    'slit_right': slit.right_pos,
-                    'dvf1': {
-                        'image': utils.get_image(dvf=self.cax.dvf_A1),
-                        'exposure_time': self.cax.dvf_A1.exposure_time,
-                        'acquisition_time': self.cax.dvf_A1.acquisition_time,
-                    },
-                    'dvf2': {
-                        'image': utils.get_image(dvf=self.cax.dvf_B1),
-                        'exposure_time': self.cax.dvf_B1.exposure_time,
-                        'acquisition_time': self.cax.dvf_B1.acquisition_time,
-                    },
-                }
+                step = {'step_row': i, 'step_col': j, 'scan_type': 'slit'}
+                step.update(utils.snapshot_machine_state(self.cax))
                 results.append(step)
 
         elapsed = (time.time() - t0) / 60
@@ -341,15 +311,8 @@ class CAXCausticMove:
             self.set_detector_pos(pos)
             time.sleep(scanargs.get('dtime', 0))
 
-            step = {
-                'step': i,
-                'z_pos': self.get_detector_pos(),
-                'dvf2': {
-                    'image': utils.get_image(dvf=self.cax.dvf_B1),
-                    'exposure_time': self.cax.dvf_B1.exposure_time,
-                    'acquisition_time': self.cax.dvf_B1.acquisition_time,
-                },
-            }
+            step = {'step': i, 'scan_type': 'caustic'}
+            step.update(utils.snapshot_machine_state(self.cax))
             results.append(step)
 
         elapsed = (time.time() - t0) / 60
@@ -398,15 +361,8 @@ class CAXLensMove:
             self.set_lens_pos(pos)
             time.sleep(scanargs.get('dtime', 0))
 
-            step = {
-                'step': i,
-                'lens_pos': self.get_lens_pos(),
-                'dvf2': {
-                    'image': utils.get_image(dvf=self.cax.dvf_B1),
-                    'exposure_time': self.cax.dvf_B1.exposure_time,
-                    'acquisition_time': self.cax.dvf_B1.acquisition_time,
-                },
-            }
+            step = {'step': i, 'scan_type': 'lens'}
+            step.update(utils.snapshot_machine_state(self.cax))
             results.append(step)
 
         elapsed = (time.time() - t0) / 60
