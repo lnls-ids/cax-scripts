@@ -2,11 +2,10 @@
 
 """CLI to control CAX mirror motors for scanning its mirror."""
 
-# from datetime import datetime
-# import time
-import numpy as np
+from datetime import datetime
 import matplotlib.pyplot as plt
 from caxscripts import utils
+from caxscripts.h5file import HDF5File
 
 from siriuspy.devices import CAXCtrl
 # from motorkin import M1Kinematics
@@ -26,6 +25,18 @@ PV_SCAN_TYPES = {
     '9': 'slit_B1',
 }
 
+DEV_BY_SCAN_TYPES = {
+    'tx'       : 'mirror',
+    'cs_rx'    : 'mirror',
+    'cs_ty'    : 'mirror',
+    'ry'       : 'mirror',
+    'cs_rz'    : 'mirror',
+    'pos_z'    : 'caustic',
+    'lens_pos' : 'lens',
+    'slit_A1'  : 'slit',
+    'slit_B1'  : 'slit',
+}
+
 
 def scan_menu_select():
     """Select scan type from a menu."""
@@ -33,13 +44,17 @@ def scan_menu_select():
     for key, value in SCAN_TYPES.items():
         print(f"  {key} - {value} scan")
 
-    caxmove = list()
-    choices = input("\n Enter choice [1-9], 'q' to quit: ")
+    scantype = list()
+    choices  = input("\n Enter choice [1-9], 'q' to quit: ")
 
     # Quit
     if choices.lower() == 'q':
         print("Exiting... Done.")
         exit(0)
+
+    if choices.lower() == '':
+        print("No choices entered. Please enter at least one choice.")
+        return scan_menu_select()  # Restart menu selection
 
     # Validate choices and create corresponding device move instances.
     choices = choices.strip().split()
@@ -47,20 +62,21 @@ def scan_menu_select():
         try:
             if choice not in SCAN_TYPES:
                 raise ValueError("Invalid choice")
-            # Type of scan.
-            caxmove.append(PV_SCAN_TYPES[choice])
+            # Keep the menu key — mapped to PV name in the main loop.
+            scantype.append(choice)
         except Exception as err:
             print(f"{err} -- '{choice}' "
                 " Please enter a number between 1 and 9.")
             scan_menu_select()  # Restart menu selection
 
-    # DEBUG
-    print("\n#####\n##### [DEBUG] Scan Menu Select "
-          f"\n##### User choices: {choices},"
-          f"\n##### CAX devices to scan:\n {caxmove}\n#####\n\n")
-    # END DEBUG
+    # File to record data.
+    filename = input(
+        " Enter filename base to save results"
+        " (timestamp will be included)): ")
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    filename = f"{filename}-{timestamp}.hdf5"
 
-    return list(set(choices)), list(set(caxmove))
+    return scantype, filename
 
 
 def device_picker(choice, cax):
@@ -81,21 +97,25 @@ def device_picker(choice, cax):
 def status_show(cax):
     """Show current status of the device."""
     # Get current status of all devices.
-    status = utils.current_config(cax)
-
-    # DEBUG: Show raw status dictionary
-    print("\n#####\n##### [DEBUG] Current Status Dictionary:\n")
-    for key, val in status.items():
-        print(f"{key}: {val}\n")
-    print("#####\n\n")
-    # END DEBUG
+    cax_status = utils.current_config(cax)
 
     # Run through all devices and print their status.
-    for key, val in status.items():
+    for key, val in cax_status.items():
         print(f" -- {key.replace('_', ' ').title()}:\n")
         try:
             for pv, vs in val.items():
-                print(f"    * {pv:15} : {vs:10.4f}")
+                if isinstance(vs, (int, float)):
+                    print(f"    * {pv:15} : {vs:10.4f}")
+                    continue
+                else:
+                    curr = float(vs[0])
+                    lolm = float(vs[1])
+                    hilm = float(vs[2])
+                    enbl = True if vs[3] == 1 else False
+                    print(f"    * {pv:15} :"
+                        f" {curr:10.4f},\t"
+                        f" limits = [{lolm:10.4f}, {hilm:10.4f}], \t"
+                        f" Enabled: {enbl}")
 
                 # print(f"  * {pv:12} : ", end="")
                 # enbl = True if vs[1] == 1 else False
@@ -106,29 +126,41 @@ def status_show(cax):
                 print(f"  * {bl:15} : {v:10.4f}")
     print("\n#####\n")
 
+    return cax_status
 
-def parameters_ask(scantype: str):
+
+def parameters_ask(scantype: str, cax_status: dict):
     """Get scan parameters from user."""
-    # Parameter limits.
-    print("\n\n** Parameter limits:")
-    print()
-
     st = SCAN_TYPES[scantype]
-    scanset = dict()
     print(f"###\n###  {st} scan parameters\n###\n")
-    scanset['start']  = float(input(
-        f"Enter start {st} position/angle: "
-        ))
-    scanset['stop']   = float(input(
-        f"Enter stop {st} position/angle: "
-        ))
-    scanset['nsteps'] = float(input(
-        "Enter number of steps for scanning: "
-        ))
-    scanset['dtime']  = float(input(
-        "Enter dwell time at each position (seconds): "
-        ))
-    return scanset
+
+    # Parameter limits.
+    motortype   = PV_SCAN_TYPES[scantype]
+    device      = DEV_BY_SCAN_TYPES[motortype]
+    motorstatus = cax_status[device][motortype]
+    limits = (min(motorstatus[0], motorstatus[1]),
+              max(motorstatus[0], motorstatus[1]))
+    print(f" ** Parameter limits: [{limits[0]:10.4f}, {limits[1]:10.4f}]")
+
+    def _ask_val(prompt, limits=limits):
+        while True:
+            try:
+                value = float(input(prompt))
+                if not (limits[0] <= value <= limits[1]):
+                    print(f"Value must be within limits: {limits}\n")
+                    continue
+                return value
+            except ValueError:
+                print("Invalid input. Please enter a numeric value.\n")
+
+    scanargs = dict()
+    scanargs['start']  = _ask_val(f"Enter start {st} position/angle: ")
+    scanargs['stop']   = _ask_val(f"Enter stop {st} position/angle: ")
+    scanargs['nsteps'] = int(_ask_val("Enter number of steps for scanning: ",
+                                      limits=(1, float('inf'))))
+    scanargs['dtime']  = _ask_val("Enter dwell time at each position (s): ",
+                                  limits=(0, float('inf')))
+    return scanargs
 
 
 def show_results(results, scantype: str):
@@ -146,11 +178,6 @@ def show_results(results, scantype: str):
 
 def main():
     """Main function to run the CLI."""
-    # DEBUG: Verify module origin
-    # import siriuspy.devices.beamlines.mirror as mirror
-    # print(f"\n[DEBUG] Mirror module loaded from: {mirror.__file__}\n")
-    # END DEBUG
-
     # Current status.
     print("\n\n#####\n##### Carcará Scanning System\n#####\n")
 
@@ -162,42 +189,26 @@ def main():
     cax_status = status_show(cax)
 
     # Select scan type.
-    scantype = scan_menu_select(cax_status)
+    scantypes, filename = scan_menu_select()
 
-    # DEBUG: Show status of each device.
-    # print(f"\n SCAN TYPES = {SCAN_TYPES}\n caxdevs = {caxdevs}\n\n",
-    #       flush=True)
-    # END DEBUG
+    # Open HDF5 file for per-step saving.
+    h5file = HDF5File(filename, filedir='.')
 
-    # DEBUG
-    print("\n#####"
-          f"\n##### [DEBUG] scantype = {scantype}\n#####\n\n")
-    # DEBUG
-
-    for st in scantype:  # noqa: B905
-        scanargs = parameters_ask(st)
-        motor_name = PV_SCAN_TYPES[st]
-        dev = device_picker(motor_name, cax)
+    print("\n\n\n##### Starting {} scan #####\n\n".format(
+        ", ".join(SCAN_TYPES[st] for st in scantypes)
+    ))
+    for choice in scantypes:
+        pv_name   = PV_SCAN_TYPES[choice]
+        scanargs  = parameters_ask(choice, cax_status)
+        dev = device_picker(pv_name, cax)
         if dev is None:
-            print(f" ERROR: No device found for scan type '{st}'.")
+            print(f" ERROR: No device found for scan type '{choice}'.")
             continue
-        # Mirror scans need the motor name in scanargs.
-        if isinstance(dev, CAXMirrorMove):
-            scanargs['motor'] = motor_name
-        results = dev.device_scan(scanargs)
-    return
+        # Mirror scans need the motor attribute name.
+        scanargs['motor'] = pv_name
+        results = dev.device_scan(scanargs, h5file=h5file)
 
-    # Show and/or record results.
-    if results is not None:
-        show_results(results, scantype)
-        recres = input(" Do you want to save the results to a file? (y/n): ")
-        if recres.lower() == 'y':
-            filename = input(" Enter filename to save results"
-                             " (e.g., scan_results.npz): ")
-            np.savez(filename, **results)
-            print(f" Results saved to {filename}.")
-    else:
-        print(" No results to show.")
+    print(f"\nData saved to {filename}.")
 
 
 if __name__ == "__main__":

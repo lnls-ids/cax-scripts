@@ -84,11 +84,12 @@ class CAXMirrorMove:
               end="", flush=True)
         return count + 1
 
-    def device_scan(self, scanargs):
+    def device_scan(self, scanargs, h5file=None):
         """Scan a mirror motor and return collected data.
 
         Args:
             scanargs: dict with 'motor', 'start', 'stop', 'nsteps', 'dtime'.
+            h5file: HDF5File instance for per-step saving (None to skip).
 
         Returns:
             list of dicts, one per scan step.
@@ -100,15 +101,24 @@ class CAXMirrorMove:
         results = []
         t0 = time.time()
 
+        # Record initial machine state before any movement.
+        step0 = {'step': 0, 'scan_type': 'mirror', 'scan_motor': motor,
+                 'initial_state': True}
+        step0.update(utils.snapshot_machine_state(self.cax))
+        results.append(step0)
+        utils.save_step(h5file, step0)
+
         for i, pos in enumerate(positions):
             print(f"Step: {i+1}/{len(positions)} -"
                   f" Moving mirror {motor} to {pos}")
             self.m1.move(motor, pos)
             time.sleep(scanargs.get('dtime', 0))
 
-            step = {'step': i, 'scan_type': 'mirror', 'scan_motor': motor}
+            step = {'step': i + 1, 'scan_type': 'mirror',
+                    'scan_motor': motor}
             step.update(utils.snapshot_machine_state(self.cax))
             results.append(step)
+            utils.save_step(h5file, step)
 
         elapsed = (time.time() - t0) / 60
         print(f'\nElapsed time [min]: {elapsed:.2f}')
@@ -229,12 +239,13 @@ class CAXSlitMove:
         # 2 arrays of slit center positions: x and y
         raise NotImplementedError
 
-    def device_scan(self, scanargs):
+    def device_scan(self, scanargs, h5file=None):
         """Scan slit positions and return collected data.
 
         Args:
             scanargs: dict with 'slit' (device), 'xpositions', 'ypositions',
                       'sqsize', 'dtime'.
+            h5file: HDF5File instance for per-step saving (None to skip).
 
         Returns:
             list of dicts, one per grid point.
@@ -245,6 +256,13 @@ class CAXSlitMove:
         sqsize  = scanargs.get('sqsize', 0.4)
         results = []
         t0 = time.time()
+
+        # Record initial machine state before any movement.
+        step0 = {'step': 0, 'scan_type': 'slit', 'initial_state': True}
+        step0.update(utils.snapshot_machine_state(self.cax))
+        results.append(step0)
+        utils.save_step(h5file, step0)
+        step_idx = 1
 
         for i, posx in enumerate(xposes):
             for j, posy in enumerate(yposes):
@@ -257,9 +275,14 @@ class CAXSlitMove:
                                   posx - sqsize/2, posx + sqsize/2)
                 time.sleep(scanargs.get('dtime', 0))
 
-                step = {'step_row': i, 'step_col': j, 'scan_type': 'slit'}
+                step = {
+                    'step': step_idx, 'step_row': i, 'step_col': j,
+                    'scan_type': 'slit',
+                }
                 step.update(utils.snapshot_machine_state(self.cax))
                 results.append(step)
+                utils.save_step(h5file, step)
+                step_idx += 1
 
         elapsed = (time.time() - t0) / 60
         print(f'\nElapsed time [min]: {elapsed:.2f}')
@@ -290,11 +313,12 @@ class CAXCausticMove:
         """."""
         return self.cax.dvf_B1.z_pos
 
-    def device_scan(self, scanargs):
+    def device_scan(self, scanargs, h5file=None):
         """Scan detector z position (caustic) and return collected data.
 
         Args:
             scanargs: dict with 'start', 'stop', 'nsteps', 'dtime'.
+            h5file: HDF5File instance for per-step saving (None to skip).
 
         Returns:
             list of dicts, one per scan step.
@@ -305,15 +329,22 @@ class CAXCausticMove:
         results = []
         t0 = time.time()
 
+        # Record initial machine state before any movement.
+        step0 = {'step': 0, 'scan_type': 'caustic', 'initial_state': True}
+        step0.update(utils.snapshot_machine_state(self.cax))
+        results.append(step0)
+        utils.save_step(h5file, step0)
+
         for i, pos in enumerate(positions):
             print(f"Step: {i+1}/{len(positions)} -"
                   f" Moving detector to z={pos:.3f}")
             self.set_detector_pos(pos)
             time.sleep(scanargs.get('dtime', 0))
 
-            step = {'step': i, 'scan_type': 'caustic'}
+            step = {'step': i + 1, 'scan_type': 'caustic'}
             step.update(utils.snapshot_machine_state(self.cax))
             results.append(step)
+            utils.save_step(h5file, step)
 
         elapsed = (time.time() - t0) / 60
         print(f'\nElapsed time [min]: {elapsed:.2f}')
@@ -340,11 +371,12 @@ class CAXLensMove:
         self.cax.dvf_B1.lens_pos = pos
         # !: waiting time after setting
 
-    def device_scan(self, scanargs):
+    def device_scan(self, scanargs, h5file=None):
         """Scan lens position and return collected data.
 
         Args:
             scanargs: dict with 'start', 'stop', 'nsteps', 'dtime'.
+            h5file: HDF5File instance for per-step saving (None to skip).
 
         Returns:
             list of dicts, one per scan step.
@@ -355,15 +387,22 @@ class CAXLensMove:
         results = []
         t0 = time.time()
 
+        # Record initial machine state before any movement.
+        step0 = {'step': 0, 'scan_type': 'lens', 'initial_state': True}
+        step0.update(utils.snapshot_machine_state(self.cax))
+        results.append(step0)
+        utils.save_step(h5file, step0)
+
         for i, pos in enumerate(positions):
             print(f"Step {i+1}/{len(positions)} -"
                   f" Moving lens to {pos:.3f}")
             self.set_lens_pos(pos)
             time.sleep(scanargs.get('dtime', 0))
 
-            step = {'step': i, 'scan_type': 'lens'}
+            step = {'step': i + 1, 'scan_type': 'lens'}
             step.update(utils.snapshot_machine_state(self.cax))
             results.append(step)
+            utils.save_step(h5file, step)
 
         elapsed = (time.time() - t0) / 60
         print(f'\nElapsed time [min]: {elapsed:.2f}')
