@@ -19,7 +19,7 @@ PV_SCAN_TYPES = {
     '3': 'cs_ty',
     '4': 'ry',
     '5': 'cs_rz',
-    '6': 'pos_z',
+    '6': 'z_pos',
     '7': 'lens_pos',
     '8': 'slit_A1',
     '9': 'slit_B1',
@@ -31,7 +31,7 @@ DEV_BY_SCAN_TYPES = {
     'cs_ty'    : 'mirror',
     'ry'       : 'mirror',
     'cs_rz'    : 'mirror',
-    'pos_z'    : 'caustic',
+    'z_pos'    : 'caustic',
     'lens_pos' : 'lens',
     'slit_A1'  : 'slit',
     'slit_B1'  : 'slit',
@@ -68,6 +68,9 @@ def scan_menu_select():
             print(f"{err} -- '{choice}' "
                 " Please enter a number between 1 and 9.")
             scan_menu_select()  # Restart menu selection
+
+    print("\n### Selected scan types:"
+          f" {', '.join(SCAN_TYPES[ch] for ch in scantype)}\n")
 
     # File to record data.
     filename = input(
@@ -138,6 +141,16 @@ def parameters_ask(scantype: str, cax_status: dict):
     motortype   = PV_SCAN_TYPES[scantype]
     device      = DEV_BY_SCAN_TYPES[motortype]
     motorstatus = cax_status[device][motortype]
+
+    # DEBUG
+    # print(f"DEBUG: scantype = {scantype} -- {st}")
+    # print(f"DEBUG: cax_status keys = {list(cax_status.keys())}")
+    # print(f"DEBUG: device = {device}")
+    # print(f"DEBUG: motortype = {motortype}")
+    # print(f"DEBUG: cax_status['{device}'] keys = {cax_status[device].keys()}")
+    # print(f"DEBUG: motorstatus = {motorstatus}")
+    # END DEBUG
+
     limits = (min(motorstatus[0], motorstatus[1]),
               max(motorstatus[0], motorstatus[1]))
     print(f" ** Parameter limits: [{limits[0]:10.4f}, {limits[1]:10.4f}]")
@@ -194,7 +207,7 @@ def main():
     # Open HDF5 file for per-step saving.
     h5file = HDF5File(filename, filedir='.')
 
-    print("\n\n\n##### Starting {} scan #####\n\n".format(
+    print("\n##### Starting {} scan #####\n".format(
         ", ".join(SCAN_TYPES[st] for st in scantypes)
     ))
     for choice in scantypes:
