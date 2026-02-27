@@ -10,7 +10,7 @@ from siriuspy.devices import CAXCtrl, DVF
 
 # dvf
 SCALE = 1     # [um/px]
-MAXERRORCOUNT = 5
+MAXERRORCOUNT = 3
 
 # ry
 STEP = 0.0001  # [mm]
@@ -139,90 +139,38 @@ def snapshot_dvf(dvf, *, include_imgproc=False):
         optionally 'beam' sub-dict.
     """
     snap = {
-        'image': get_image(dvf),
-        'exposure_time': dvf.exposure_time,
-        'acquisition_time': dvf.acquisition_time,
+            'acq_time'      : dvf.acquisition_time,
+            'expo_time'     : dvf.exposure_time,
+            'image'         : get_image(dvf),
     }
+
     if include_imgproc:
-        snap['beam'] = {
+        snap.update({
             # --- centroid (1-D Gaussian fit means, in pixels) ---
-            'roix_fit_mean': dvf.roix_fit_mean,
-            'roiy_fit_mean': dvf.roiy_fit_mean,
+            'roix_fit_mean'  : dvf.roix_fit_mean,
+            'roiy_fit_mean'  : dvf.roiy_fit_mean,
+
             # --- beam widths (1-D Gaussian fit sigmas, in pixels) ---
-            'roix_fit_sigma': dvf.roix_fit_sigma,
-            'roiy_fit_sigma': dvf.roiy_fit_sigma,
+            'roix_fit_sigma' : dvf.roix_fit_sigma,
+            'roiy_fit_sigma' : dvf.roiy_fit_sigma,
+
             # --- FWHM of the ROI projections (pixels) ---
-            'roix_fwhm': dvf.roix_fwhm,
-            'roiy_fwhm': dvf.roiy_fwhm,
+            'roix_fwhm'      : dvf.roix_fwhm,
+            'roiy_fwhm'      : dvf.roiy_fwhm,
+
             # --- 2-D ellipse fit (from second-moment SVD) ---
-            'fit_angle': dvf.fit_angle,      # tilt angle [deg]
-            'fit_sigma1': dvf.fit_sigma1,    # major-axis sigma [px]
-            'fit_sigma2': dvf.fit_sigma2,    # minor-axis sigma [px]
+            'fit_angle'      : dvf.fit_angle,     # tilt angle [deg]
+            'fit_sigma1'     : dvf.fit_sigma1,    # major-axis sigma [px]
+            'fit_sigma2'     : dvf.fit_sigma2,    # minor-axis sigma [px]
+
             # --- fit quality ---
-            'roix_fit_error': dvf.roix_fit_error,
-            'roiy_fit_error': dvf.roiy_fit_error,
-        }
+            'roix_fit_error' : dvf.roix_fit_error,
+            'roiy_fit_error' : dvf.roiy_fit_error,
+        })
     return snap
 
 
-def snapshot_machine_state(cax):
-    """Capture a full machine-state snapshot at the current instant.
-
-    Reads all mirror motor positions, slit blade positions,
-    photocollector signal, both DVF images with camera settings,
-    and beam-fit diagnostics from dvf_B1 (DVFImgProc).
-
-    Returns:
-        dict suitable for storing as one scan-step record.
-    """
-    m1 = cax.mirror
-    s1 = cax.slit_A1
-    s2 = cax.slit_B1
-
-    state = {
-        # --- mirror raw motors ---
-        'mirror': {
-            'tx':  m1.tx_mon,
-            'ry':  m1.ry_mon,
-            'y1':  m1.y1_mon,
-            'y2':  m1.y2_mon,
-            'y3':  m1.y3_mon,
-        },
-        # --- mirror kinematics ---
-        'mirror_kin': {
-            'cs_rx': m1.cs_rx_mon,
-            'cs_rz': m1.cs_rz_mon,
-            'cs_tx': m1.cs_tx_mon,
-            'cs_ty': m1.cs_ty_mon,
-        },
-        # --- photocollector ---
-        'photocollector': m1.photocurrent_signal,
-        # --- slit A1 (before mirror) ---
-        'slit_A1': {
-            'top':    s1.top_pos,
-            'bottom': s1.bottom_pos,
-            'left':   s1.left_pos,
-            'right':  s1.right_pos,
-        },
-        # --- slit B1 (after mirror) ---
-        'slit_B1': {
-            'top':    s2.top_pos,
-            'bottom': s2.bottom_pos,
-            'left':   s2.left_pos,
-            'right':  s2.right_pos,
-        },
-        # --- DVF A1 (plain DVF, no ImgProc) ---
-        'dvf1': snapshot_dvf(cax.dvf_A1, include_imgproc=False),
-        # --- DVF B1 / CAXDtc (DVFImgProc: image + beam diagnostics) ---
-        'dvf2': snapshot_dvf(cax.dvf_B1, include_imgproc=True),
-        # --- DVF B1 motor positions ---
-        'dvf2_z_pos':   cax.dvf_B1.z_pos,
-        'dvf2_lens_pos': cax.dvf_B1.lens_pos,
-    }
-    return state
-
-
-def current_config(cax: CAXCtrl):
+def snapshot_machine_state(cax: CAXCtrl):
     """Get current beamline configuration as a dictionary."""
     caxm  = cax.mirror
     mirror_status = {
@@ -307,25 +255,38 @@ def current_config(cax: CAXCtrl):
                                caxs2[cpv2.RIGHT_ENBL]]
         }
 
-    dvf1  = cax.dvf_A1
-    dvf1_status = {
-            'acq_time'      : dvf1.acquisition_time,
-            'expo_time'     : dvf1.exposure_time
-        }
+    # DVF1 status accounts for caustic scans.
+    dvf1_status = snapshot_dvf(cax.dvf_A1, include_imgproc=False)
 
+    # caustic_status = {
+    #     'z_pos' : [dvf2.z_pos,
+    #                dvf2.z_min,
+    #                dvf2.z_max,
+    #                dvf2["PP01:E.CNEN"]]  # Bypass to get enable status of z_pos
+    #     }
+    # caustic_status.update(snapshot_dvf(dvf2, include_imgproc=False))
+
+    # DVF2 status accounts for lens and caustic scans.
     dvf2  = cax.dvf_B1
-    caustic_status = {
-            'acq_time'      : dvf2.acquisition_time,
-            'expo_time'     : dvf2.exposure_time,
-            'z_pos'         : dvf2.z_pos
+    dvf2_status = {
+        'z_pos'    : [dvf2.z_pos,
+                      dvf2.z_min,
+                      dvf2.z_max,
+                      dvf2["PP01:E.CNEN"]],  # Bypass to get enable status of z_pos
+        'lens_pos' : [dvf2.lens_pos,
+                      dvf2.lens_min,
+                      dvf2.lens_max,
+                      dvf2["PP01:F.CNEN"]],  # Bypass to get enable status of lens_pos
         }
+    dvf2_status.update(snapshot_dvf(dvf2, include_imgproc=False))
 
     return {
         'mirror' : mirror_status,
         'slit1'  : slit1_status,
         'slit2'  : slit2_status,
         'dvf1'   : dvf1_status,
-        'caustic': caustic_status
+        'dvf2'   : dvf2_status,
+        # 'caustic': caustic_status
     }
 
 
@@ -335,7 +296,7 @@ def save_beamline_config(filename, filedir):
     if file.split('.')[-1] != 'json':
         file += '.json'
 
-    config = current_config()
+    config = snapshot_machine_state()
 
     with open(file, 'w') as f:
         json.dump(config, f, indent=4)
@@ -428,6 +389,7 @@ def save_step(h5file, step, step_index=None):
         dvf_dict = step.get(dvf_key)
         if dvf_dict is None:
             continue
+
         image = dvf_dict[_DVF_IMAGE_KEY]
         dset_attrs = _flatten_dict(
             {k: v for k, v in dvf_dict.items() if k != _DVF_IMAGE_KEY}

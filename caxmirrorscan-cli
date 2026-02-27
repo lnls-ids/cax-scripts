@@ -10,8 +10,22 @@ from caxscripts.h5file import HDF5File
 from siriuspy.devices import CAXCtrl
 # from motorkin import M1Kinematics
 from caxscripts.motormov import (
-    CAXMirrorMove, CAXCausticMove, CAXSlitMove, CAXLensMove, SCAN_TYPES
+    CAXMirrorMove, CAXCausticMove, CAXSlitMove, CAXLensMove,
     )
+
+
+SCAN_TYPES = {
+    '1' : 'Mirror x translation (Tx)',
+    '2' : 'Mirror x rotation    (Rx)',
+    '3' : 'Mirror y translation (Ty)',
+    '4' : 'Mirror y rotation    (Ry)',
+    '5' : 'Mirror z rotation    (Rz)',
+    '6' : 'Caustic',
+    '7' : 'Lens (DVF2) translation',
+    '8' : 'Slit set 1 window (before mirror)',
+    '9' : 'Slit set 2 window (after mirror)',
+}
+
 
 PV_SCAN_TYPES = {
     '1': 'tx',
@@ -31,7 +45,7 @@ DEV_BY_SCAN_TYPES = {
     'cs_ty'    : 'mirror',
     'ry'       : 'mirror',
     'cs_rz'    : 'mirror',
-    'z_pos'    : 'caustic',
+    'z_pos'    : 'dvf2',
     'lens_pos' : 'lens',
     'slit_A1'  : 'slit',
     'slit_B1'  : 'slit',
@@ -100,7 +114,7 @@ def device_picker(choice, cax):
 def status_show(cax):
     """Show current status of the device."""
     # Get current status of all devices.
-    cax_status = utils.current_config(cax)
+    cax_status = utils.snapshot_machine_state(cax)
 
     # Run through all devices and print their status.
     for key, val in cax_status.items():
@@ -110,6 +124,8 @@ def status_show(cax):
                 if isinstance(vs, (int, float)):
                     print(f"    * {pv:15} : {vs:10.4f}")
                     continue
+                elif pv == 'image':
+                    print(f"    * {pv:15} : [image data, shape = {vs.shape}]")
                 else:
                     curr = float(vs[0])
                     lolm = float(vs[1])
@@ -125,8 +141,8 @@ def status_show(cax):
                 # print(f"{vs[0]:12.6f}, enabled = {enbl}")
             print("\n")
         except Exception:
-            for bl, v in val:
-                print(f"  * {bl:15} : {v:10.4f}")
+            for bl, v in val.items():
+                print(f"  * {bl:15} : {v}")
     print("\n#####\n")
 
     return cax_status
@@ -151,8 +167,9 @@ def parameters_ask(scantype: str, cax_status: dict):
     # print(f"DEBUG: motorstatus = {motorstatus}")
     # END DEBUG
 
-    limits = (min(motorstatus[0], motorstatus[1]),
-              max(motorstatus[0], motorstatus[1]))
+    # Guaraantees the order of limits for later comparison.
+    limits = (min(motorstatus[1], motorstatus[2]),
+              max(motorstatus[1], motorstatus[2]))
     print(f" ** Parameter limits: [{limits[0]:10.4f}, {limits[1]:10.4f}]")
 
     def _ask_val(prompt, limits=limits):
@@ -164,6 +181,9 @@ def parameters_ask(scantype: str, cax_status: dict):
                     continue
                 return value
             except ValueError:
+                if value == 'q':
+                    print("Exiting... Done.")
+                    exit(0)
                 print("Invalid input. Please enter a numeric value.\n")
 
     scanargs = dict()
@@ -213,7 +233,19 @@ def main():
     for choice in scantypes:
         pv_name   = PV_SCAN_TYPES[choice]
         scanargs  = parameters_ask(choice, cax_status)
+        print(f"\n### Starting {SCAN_TYPES[choice]} scan with parameters:\n"
+              f" start    : {scanargs['start']:15.4f} mm,\n"
+              f" stop     : {scanargs['stop']:15.4f} mm,\n"
+              f" in       : {scanargs['nsteps']:15} steps,\n"
+              f" interval : {scanargs['dtime']:15.4f} s\n")
+
+        # Instantiate the device for the chosen scan type.
         dev = device_picker(pv_name, cax)
+
+        # DEBUG
+        print(f"### (main) DEBUG: device = {dev}\n###\n")
+        # DEBUG
+
         if dev is None:
             print(f" ERROR: No device found for scan type '{choice}'.")
             continue

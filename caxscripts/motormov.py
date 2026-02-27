@@ -1,9 +1,11 @@
 """This class controls the CAX's motors for scanning its mirror."""
 
+from datetime import datetime
 import time
 import numpy as np
 from . import utils
 
+from siriuspy.devices.beamlines.mirror import _PVAccessor
 
 # from caxscripts import h5file
 # import matplotlib.pyplot as plt
@@ -19,18 +21,6 @@ from . import utils
 ZPOSMIN = 135.14
 ZPOSMAX = 560
 
-SCAN_TYPES = {
-    '1' : 'Mirror x translation (Tx)',
-    '2' : 'Mirror x rotation    (Rx)',
-    '3' : 'Mirror y translation (Ty)',
-    '4' : 'Mirror y rotation    (Ry)',
-    '5' : 'Mirror z rotation    (Rz)',
-    '6' : 'Caustic',
-    '7' : 'Lens (DVF2) translation',
-    '8' : 'Slit set 1 window (before mirror)',
-    '9' : 'Slit set 2 window (after mirror)',
-}
-
 
 class CAXMirrorMove:
     """."""
@@ -43,7 +33,7 @@ class CAXMirrorMove:
 
     def device_status(self):
         """Show current status of mirror motors."""
-        cax_status = utils.current_config(self.cax)
+        cax_status = utils.snapshot_machine_state(self.cax)
         mirror_status = cax_status['mirror']
 
         # mirror_status[key] = [mon, lolm, hilm, enbl]
@@ -102,8 +92,13 @@ class CAXMirrorMove:
         t0 = time.time()
 
         # Record initial machine state before any movement.
-        step0 = {'step': 0, 'scan_type': 'mirror', 'scan_motor': motor,
-                 'initial_state': True}
+        step0 = {
+            'step': 0,
+            'scan_type': 'mirror',
+            'scan_motor': motor,
+            'initial_state': True,
+            'time': datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            }
         step0.update(utils.snapshot_machine_state(self.cax))
         results.append(step0)
         utils.save_step(h5file, step0)
@@ -114,8 +109,13 @@ class CAXMirrorMove:
             self.m1.move(motor, pos)
             time.sleep(scanargs.get('dtime', 0))
 
-            step = {'step': i + 1, 'scan_type': 'mirror',
-                    'scan_motor': motor}
+            step = {
+                'step': i + 1,
+                'scan_type': 'mirror',
+                'scan_motor': motor,
+                'initial_state': False,
+                'time': datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            }
             step.update(utils.snapshot_machine_state(self.cax))
             results.append(step)
             utils.save_step(h5file, step)
@@ -291,7 +291,7 @@ class CAXSlitMove:
 
 # ----- caustic ------- #
 
-class CAXCausticMove:
+class CAXCausticMove():
     """Class to control caustic scan of CAX beamline."""
 
     def __init__(self, caxctrl):
@@ -323,28 +323,45 @@ class CAXCausticMove:
         Returns:
             list of dicts, one per scan step.
         """
-        positions = np.linspace(
-            scanargs['start'], scanargs['stop'], int(scanargs['nsteps'])
-        )
+        # List for storing results of each step, to be returned at the end.
         results = []
-        t0 = time.time()
 
         # Record initial machine state before any movement.
-        step0 = {'step': 0, 'scan_type': 'caustic', 'initial_state': True}
+        step0 = {
+            'step': 0,
+            'scan_type': 'caustic',
+            'initial_state': True,
+            'time': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            }
         step0.update(utils.snapshot_machine_state(self.cax))
         results.append(step0)
         utils.save_step(h5file, step0)
 
+        # Scan positions.
+        positions = np.linspace(
+            scanargs['start'], scanargs['stop'], int(scanargs['nsteps'])
+        )
+
+        # DEBUG
+        print(f"\n### (device_scan) DEBUG: positions = {positions} \n###\n")
+        # END DEBUG
+
+        t0 = time.time()
         for i, pos in enumerate(positions):
             print(f"Step: {i+1}/{len(positions)} -"
                   f" Moving detector to z={pos:.3f}")
             self.set_detector_pos(pos)
             time.sleep(scanargs.get('dtime', 0))
 
-            step = {'step': i + 1, 'scan_type': 'caustic'}
+            step = {
+                'step': i + 1,
+                'scan_type': 'caustic',
+                'initial_state': False,
+                'time': datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                }
             step.update(utils.snapshot_machine_state(self.cax))
-            results.append(step)
             utils.save_step(h5file, step)
+            results.append(step)
 
         elapsed = (time.time() - t0) / 60
         print(f'\nElapsed time [min]: {elapsed:.2f}')
@@ -353,7 +370,7 @@ class CAXCausticMove:
 
 # ------- lens -------- #
 
-class CAXLensMove:
+class CAXLensMove(_PVAccessor):
     """Class to control lens scan of CAX beamline."""
 
     def __init__(self, caxctrl, positions_number=100):
@@ -372,7 +389,7 @@ class CAXLensMove:
         # !: waiting time after setting
 
     def device_scan(self, scanargs, h5file=None):
-        """Scan lens position and return collected data.
+        """Scan lens position and return collected data.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
         Args:
             scanargs: dict with 'start', 'stop', 'nsteps', 'dtime'.
@@ -399,7 +416,12 @@ class CAXLensMove:
             self.set_lens_pos(pos)
             time.sleep(scanargs.get('dtime', 0))
 
-            step = {'step': i + 1, 'scan_type': 'lens'}
+            step = {
+                'step': i + 1,
+                'scan_type': 'lens',
+                'initial_state': False,
+                'time': datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                }
             step.update(utils.snapshot_machine_state(self.cax))
             results.append(step)
             utils.save_step(h5file, step)

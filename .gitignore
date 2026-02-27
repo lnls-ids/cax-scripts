@@ -180,3 +180,4 @@ cython_debug/
 # Other
 test*
 tmp*
+caxscripts/test*
