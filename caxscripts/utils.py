@@ -214,45 +214,43 @@ def snapshot_machine_state(cax: CAXCtrl):
         }
 
     caxs1 = cax.slit_A1
-    cpv1  = caxs1.PVS
     slit1_status = {
-            'top'           : [caxs1.top_pos,
-                               caxs1[cpv1.TOP_LOLM],
-                               caxs1[cpv1.TOP_HILM],
-                               caxs1[cpv1.TOP_ENBL]],
-            'bottom'        : [caxs1.bottom_pos,
-                               caxs1[cpv1.BOTTOM_LOLM],
-                               caxs1[cpv1.BOTTOM_HILM],
-                               caxs1[cpv1.BOTTOM_ENBL]],
-            'left'          : [caxs1.left_pos,
-                               caxs1[cpv1.LEFT_LOLM],
-                               caxs1[cpv1.LEFT_HILM],
-                               caxs1[cpv1.LEFT_ENBL]],
-            'right'         : [caxs1.right_pos,
-                               caxs1[cpv1.RIGHT_LOLM],
-                               caxs1[cpv1.RIGHT_HILM],
-                               caxs1[cpv1.RIGHT_ENBL]]
+            'top'           : [caxs1.top_mon,
+                               caxs1.top_lolm,
+                               caxs1.top_hilm,
+                               caxs1.top_enbl],
+            'bottom'        : [caxs1.bottom_mon,
+                               caxs1.bottom_lolm,
+                               caxs1.bottom_hilm,
+                               caxs1.bottom_enbl],
+            'left'          : [caxs1.left_mon,
+                               caxs1.left_lolm,
+                               caxs1.left_hilm,
+                               caxs1.left_enbl],
+            'right'         : [caxs1.right_mon,
+                               caxs1.right_lolm,
+                               caxs1.right_hilm,
+                               caxs1.right_enbl]
         }
 
     caxs2 = cax.slit_B1
-    cpv2  = caxs2.PVS
     slit2_status = {
-            'top'           : [caxs2.top_pos,
-                               caxs2[cpv2.TOP_LOLM],
-                               caxs2[cpv2.TOP_HILM],
-                               caxs2[cpv2.TOP_ENBL]],
-            'bottom'        : [caxs2.bottom_pos,
-                               caxs2[cpv2.BOTTOM_LOLM],
-                               caxs2[cpv2.BOTTOM_HILM],
-                               caxs2[cpv2.BOTTOM_ENBL]],
-            'left'          : [caxs2.left_pos,
-                               caxs2[cpv2.LEFT_LOLM],
-                               caxs2[cpv2.LEFT_HILM],
-                               caxs2[cpv2.LEFT_ENBL]],
-            'right'         : [caxs2.right_pos,
-                               caxs2[cpv2.RIGHT_LOLM],
-                               caxs2[cpv2.RIGHT_HILM],
-                               caxs2[cpv2.RIGHT_ENBL]]
+            'top'           : [caxs2.top_mon,
+                               caxs2.top_lolm,
+                               caxs2.top_hilm,
+                               caxs2.top_enbl],
+            'bottom'        : [caxs2.bottom_mon,
+                               caxs2.bottom_lolm,
+                               caxs2.bottom_hilm,
+                               caxs2.bottom_enbl],
+            'left'          : [caxs2.left_mon,
+                               caxs2.left_lolm,
+                               caxs2.left_hilm,
+                               caxs2.left_enbl],
+            'right'         : [caxs2.right_mon,
+                               caxs2.right_lolm,
+                               caxs2.right_hilm,
+                               caxs2.right_enbl]
         }
 
     # DVF1 status accounts for caustic scans.
@@ -269,14 +267,14 @@ def snapshot_machine_state(cax: CAXCtrl):
     # DVF2 status accounts for lens and caustic scans.
     dvf2  = cax.dvf_B1
     dvf2_status = {
-        'z_pos'    : [dvf2.z_pos,
-                      dvf2.z_min,
-                      dvf2.z_max,
-                      dvf2["PP01:E.CNEN"]],  # Bypass to get enable status of z_pos
-        'lens_pos' : [dvf2.lens_pos,
-                      dvf2.lens_min,
-                      dvf2.lens_max,
-                      dvf2["PP01:F.CNEN"]],  # Bypass to get enable status of lens_pos
+        'z_pos'    : [dvf2.z_mon,
+                      dvf2.z_lolm,
+                      dvf2.z_hilm,
+                      dvf2.z_enbl],  # Bypass to get enable status of z_pos
+        'lens_pos' : [dvf2.lens_mon,
+                      dvf2.lens_lolm,
+                      dvf2.lens_hilm,
+                      dvf2.lens_enbl],  # Bypass to get enable status of lens_pos
         }
     dvf2_status.update(snapshot_dvf(dvf2, include_imgproc=False))
 

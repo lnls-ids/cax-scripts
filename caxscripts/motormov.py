@@ -5,7 +5,7 @@ import time
 import numpy as np
 from . import utils
 
-from siriuspy.devices.beamlines.mirror import _PVAccessor
+from siriuspy.devices.device import _PVAccessor
 
 # from caxscripts import h5file
 # import matplotlib.pyplot as plt
@@ -229,10 +229,16 @@ class CAXSlitMove:
                      top_pos, bottom_pos,
                      left_pos, right_pos):
         """."""
-        slit.move_robust_top(value=top_pos)
-        slit.move_robust_bottom(value=bottom_pos)
-        slit.move_robust_left(value=left_pos)
-        slit.move_robust_right(value=right_pos)
+
+        # Calls robust_device_motor_move from _PVAccessor
+        slit.top    = top_pos
+        slit.bottom = bottom_pos
+        slit.left   = left_pos
+        slit.right  = right_pos
+        # slit.move_robust_top(value=top_pos)
+        # slit.move_robust_bottom(value=bottom_pos)
+        # slit.move_robust_left(value=left_pos)
+        # slit.move_robust_right(value=right_pos)
 
     def slit_positions(self, m=100, n=100):
         """."""
@@ -301,17 +307,17 @@ class CAXCausticMove():
 
     def device_status(self):
         """Show initial statuts of caustic motor."""
-        dev_status = {'caustic': [('Z', self.cax.dvf_B1.z_pos)]}
+        dev_status = {'caustic': [('Z', self.cax.dvf_B1.z_mon)]}
         return dev_status
 
     def set_detector_pos(self, pos):
         """."""
-        self.cax.dvf_B1.z_pos = pos
+        self.cax.dvf_B1.z = pos # this now uses _PVAccessor's robust moving methods
         # !: waiting time after setting
 
     def get_detector_pos(self):
         """."""
-        return self.cax.dvf_B1.z_pos
+        return self.cax.dvf_B1.z_mon
 
     def device_scan(self, scanargs, h5file=None):
         """Scan detector z position (caustic) and return collected data.
@@ -381,11 +387,11 @@ class CAXLensMove(_PVAccessor):
 
     def get_lens_pos(self):
         """."""
-        return self.cax.dvf_B1.lens_pos
+        return self.cax.dvf_B1.lens_mon
 
     def set_lens_pos(self, pos):
         """."""
-        self.cax.dvf_B1.lens_pos = pos
+        self.cax.dvf_B1.lens = pos  # this now uses _PVAccessor's robust moving methods
         # !: waiting time after setting
 
     def device_scan(self, scanargs, h5file=None):
