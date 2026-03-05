@@ -279,11 +279,11 @@ def snapshot_machine_state(cax: CAXCtrl):
     dvf2_status.update(snapshot_dvf(dvf2, include_imgproc=False))
 
     return {
-        'mirror' : mirror_status,
-        'slit1'  : slit1_status,
-        'slit2'  : slit2_status,
-        'dvf1'   : dvf1_status,
-        'dvf2'   : dvf2_status,
+        'mirror'  : mirror_status,
+        'slit_A1' : slit1_status,
+        'slit_B1' : slit2_status,
+        'dvf1'    : dvf1_status,
+        'dvf2'    : dvf2_status,
         # 'caustic': caustic_status
     }
 

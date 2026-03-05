@@ -148,15 +148,38 @@ def status_show(cax):
     return cax_status
 
 
+def _ask_val(prompt, limits):
+    while True:
+        try:
+            value = float(input(prompt))
+            if not (limits[0] <= value <= limits[1]):
+                print(f"Value must be within limits: {limits}\n")
+                continue
+            return value
+        except ValueError:
+            if value == 'q':
+                print("Exiting... Done.")
+                exit(0)
+            print("Invalid input. Please enter a numeric value.\n")
+
+
 def parameters_ask(scantype: str, cax_status: dict):
     """Get scan parameters from user."""
     st = SCAN_TYPES[scantype]
     print(f"###\n###  {st} scan parameters\n###\n")
 
+    # DEBUG
+    print(f"###### DEBUG:\n##### cax_status keys = {cax_status}\n#####\n")
+    # END DEBUG
+
     # Parameter limits.
     motortype   = PV_SCAN_TYPES[scantype]
     device      = DEV_BY_SCAN_TYPES[motortype]
-    motorstatus = cax_status[device][motortype]
+
+    if device == 'slit':
+        motorstatus = cax_status[device]
+    else:
+        motorstatus = cax_status[device][motortype]
 
     # DEBUG
     # print(f"DEBUG: scantype = {scantype} -- {st}")
@@ -172,25 +195,11 @@ def parameters_ask(scantype: str, cax_status: dict):
               max(motorstatus[1], motorstatus[2]))
     print(f" ** Parameter limits: [{limits[0]:10.4f}, {limits[1]:10.4f}]")
 
-    def _ask_val(prompt, limits=limits):
-        while True:
-            try:
-                value = float(input(prompt))
-                if not (limits[0] <= value <= limits[1]):
-                    print(f"Value must be within limits: {limits}\n")
-                    continue
-                return value
-            except ValueError:
-                if value == 'q':
-                    print("Exiting... Done.")
-                    exit(0)
-                print("Invalid input. Please enter a numeric value.\n")
-
     scanargs = dict()
-    scanargs['start']  = _ask_val(f"Enter start {st} position/angle: ")
-    scanargs['stop']   = _ask_val(f"Enter stop {st} position/angle: ")
+    scanargs['start']  = _ask_val(f"Enter start {st} position/angle: ", limits)
+    scanargs['stop']   = _ask_val(f"Enter stop {st} position/angle: ", limits)
     scanargs['nsteps'] = int(_ask_val("Enter number of steps for scanning: ",
-                                      limits=(1, float('inf'))))
+                                      limits=(1, float('inf'))), limits)
     scanargs['dtime']  = _ask_val("Enter dwell time at each position (s): ",
                                   limits=(0, float('inf')))
     return scanargs

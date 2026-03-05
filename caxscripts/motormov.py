@@ -349,25 +349,30 @@ class CAXCausticMove():
         )
 
         # DEBUG
-        print(f"\n### (device_scan) DEBUG: positions = {positions} \n###\n")
+        # print(f"\n### (device_scan) DEBUG: positions = {positions} \n###\n")
         # END DEBUG
 
         t0 = time.time()
         for i, pos in enumerate(positions):
             print(f"Step: {i+1}/{len(positions)} -"
-                  f" Moving detector to z={pos:.3f}")
+                  f" Moving detector to z = {pos:.3f}")
             self.set_detector_pos(pos)
             time.sleep(scanargs.get('dtime', 0))
 
-            step = {
-                'step': i + 1,
-                'scan_type': 'caustic',
-                'initial_state': False,
-                'time': datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                }
-            step.update(utils.snapshot_machine_state(self.cax))
-            utils.save_step(h5file, step)
-            results.append(step)
+            try:
+                step = {
+                    'step': i + 1,
+                    'scan_type': 'caustic',
+                    'initial_state': False,
+                    'time': datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                    }
+                step.update(utils.snapshot_machine_state(self.cax))
+                utils.save_step(h5file, step)
+                results.append(step)
+                print(f" Ended step {i+1} -- snapshot saved. \n")
+            except Exception as err:
+                print(f" Could not save step {i+1}: \n {err}\n")
+                continue
 
         elapsed = (time.time() - t0) / 60
         print(f'\nElapsed time [min]: {elapsed:.2f}')
