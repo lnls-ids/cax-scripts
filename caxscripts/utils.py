@@ -254,7 +254,7 @@ def snapshot_machine_state(cax: CAXCtrl):
         }
 
     # DVF1 status accounts for caustic scans.
-    dvf1_status = snapshot_dvf(cax.dvf_A1, include_imgproc=False)
+    dvfA1_status = snapshot_dvf(cax.dvf_A1, include_imgproc=False)
 
     # caustic_status = {
     #     'z_pos' : [dvf2.z_pos,
@@ -265,26 +265,25 @@ def snapshot_machine_state(cax: CAXCtrl):
     # caustic_status.update(snapshot_dvf(dvf2, include_imgproc=False))
 
     # DVF2 status accounts for lens and caustic scans.
-    dvf2  = cax.dvf_B1
-    dvf2_status = {
-        'z_pos'    : [dvf2.z_mon,
-                      dvf2.z_lolm,
-                      dvf2.z_hilm,
-                      dvf2.z_enbl],  # Bypass to get enable status of z_pos
-        'lens_pos' : [dvf2.lens_mon,
-                      dvf2.lens_lolm,
-                      dvf2.lens_hilm,
-                      dvf2.lens_enbl],  # Bypass to get enable status of lens_pos
+    dvfB1  = cax.dvf_B1
+    dvf_B1_status = {
+        'z_pos'    : [dvfB1.z_mon,
+                      dvfB1.z_lolm,
+                      dvfB1.z_hilm,
+                      dvfB1.z_enbl],  # Bypass to get enable status of z_pos
+        'lens_pos' : [dvfB1.lens_mon,
+                      dvfB1.lens_lolm,
+                      dvfB1.lens_hilm,
+                      dvfB1.lens_enbl],  # Bypass to get enable status of lens_pos
         }
-    dvf2_status.update(snapshot_dvf(dvf2, include_imgproc=False))
+    dvf_B1_status.update(snapshot_dvf(dvfB1, include_imgproc=False))
 
     return {
         'mirror'  : mirror_status,
         'slit_A1' : slit1_status,
         'slit_B1' : slit2_status,
-        'dvf1'    : dvf1_status,
-        'dvf2'    : dvf2_status,
-        # 'caustic': caustic_status
+        'dvf_A1'  : dvfA1_status,
+        'dvf_B1'  : dvf_B1_status,
     }
 
 

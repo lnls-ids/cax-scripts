@@ -9,46 +9,23 @@ from caxscripts.h5file import HDF5File
 
 from siriuspy.devices import CAXCtrl
 # from motorkin import M1Kinematics
-from caxscripts.motormov import (
-    CAXMirrorMove, CAXCausticMove, CAXSlitMove, CAXLensMove,
-    )
+import caxscripts.motormov as mtv
+import sys
 
 
+# Scan types:
+# key = user choice;
+# list : menu description, PV name, device name, class name.
 SCAN_TYPES = {
-    '1' : 'Mirror x translation (Tx)',
-    '2' : 'Mirror x rotation    (Rx)',
-    '3' : 'Mirror y translation (Ty)',
-    '4' : 'Mirror y rotation    (Ry)',
-    '5' : 'Mirror z rotation    (Rz)',
-    '6' : 'Caustic',
-    '7' : 'Lens (DVF2) translation',
-    '8' : 'Slit set 1 window (before mirror)',
-    '9' : 'Slit set 2 window (after mirror)',
-}
-
-
-PV_SCAN_TYPES = {
-    '1': 'tx',
-    '2': 'cs_rx',
-    '3': 'cs_ty',
-    '4': 'ry',
-    '5': 'cs_rz',
-    '6': 'z_pos',
-    '7': 'lens_pos',
-    '8': 'slit_A1',
-    '9': 'slit_B1',
-}
-
-DEV_BY_SCAN_TYPES = {
-    'tx'       : 'mirror',
-    'cs_rx'    : 'mirror',
-    'cs_ty'    : 'mirror',
-    'ry'       : 'mirror',
-    'cs_rz'    : 'mirror',
-    'z_pos'    : 'dvf2',
-    'lens_pos' : 'lens',
-    'slit_A1'  : 'slit',
-    'slit_B1'  : 'slit',
+    '1' : ['Mirror x translation (Tx)',         'tx',       'mirror',  'CAXMirrorMove'],
+    '2' : ['Mirror x rotation    (Rx)',         'cs_rx',    'mirror',  'CAXMirrorMove'],
+    '3' : ['Mirror y translation (Ty)',         'cs_ty',    'mirror',  'CAXMirrorMove'],
+    '4' : ['Mirror y rotation    (Ry)',         'ry',       'mirror',  'CAXMirrorMove'],
+    '5' : ['Mirror z rotation    (Rz)',         'cs_rz',    'mirror',  'CAXMirrorMove'],
+    '6' : ['Caustic',                           'z_pos',    'dvf_B1',  'CAXCausticMove'],
+    '7' : ['Lens (DVF2) translation',           'lens_pos', 'lens',    'CAXLensMove'],
+    '8' : ['Slit set 1 window (before mirror)', 'slit_A1',  'slit_A1', 'CAXSlitMove'],
+    '9' : ['Slit set 2 window (after mirror)',  'slit_B1',  'slit_B1', 'CAXSlitMove'],
 }
 
 
@@ -56,7 +33,7 @@ def scan_menu_select():
     """Select scan type from a menu."""
     print("\nSelect scan (type a list of numbers separated by spaces):\n")
     for key, value in SCAN_TYPES.items():
-        print(f"  {key} - {value} scan")
+        print(f"  {key} - {value[0]} scan")
 
     scantype = list()
     choices  = input("\n Enter choice [1-9], 'q' to quit: ")
@@ -84,7 +61,7 @@ def scan_menu_select():
             scan_menu_select()  # Restart menu selection
 
     print("\n### Selected scan types:"
-          f" {', '.join(SCAN_TYPES[ch] for ch in scantype)}\n")
+          f" {', '.join(SCAN_TYPES[ch][0] for ch in scantype)}\n")
 
     # File to record data.
     filename = input(
@@ -98,17 +75,8 @@ def scan_menu_select():
 
 def device_picker(choice, cax):
     """Return the device instance for the chosen scan type."""
-    opts = list(PV_SCAN_TYPES.values())
-    if choice in opts[:5]:       # Mirror motors
-        return CAXMirrorMove(cax)
-    elif choice == opts[5]:      # Caustic (z position)
-        return CAXCausticMove(cax)
-    elif choice == opts[6]:      # Lens position
-        return CAXLensMove(cax)
-    elif choice in opts[7:9]:    # Slit positions
-        return CAXSlitMove(cax)
-    else:
-        return None
+    class_name = SCAN_TYPES[choice][3]
+    return getattr(mtv, class_name)(cax)
 
 
 def status_show(cax):
@@ -165,21 +133,31 @@ def _ask_val(prompt, limits):
 
 def parameters_ask(scantype: str, cax_status: dict):
     """Get scan parameters from user."""
-    st = SCAN_TYPES[scantype]
+    st = SCAN_TYPES[scantype][1]
     print(f"###\n###  {st} scan parameters\n###\n")
 
     # DEBUG
-    print(f"###### DEBUG:\n##### cax_status keys = {cax_status}\n#####\n")
+    # print(f"###### DEBUG:\n##### cax_status keys = {cax_status}\n#####\n")
     # END DEBUG
 
     # Parameter limits.
-    motortype   = PV_SCAN_TYPES[scantype]
-    device      = DEV_BY_SCAN_TYPES[motortype]
+    motortype   = SCAN_TYPES[scantype][1]
+    device      = SCAN_TYPES[scantype][2]
 
-    if device == 'slit':
+    # Slits structure is more complex, with multiple parameters per slit. 
+    # It must be refactored in functions.
+    # Current form does not solve it.
+
+    if device == 'slit_A1' or device == 'slit_B1':
         motorstatus = cax_status[device]
+        currval = { key : float(val[0]) for key, val in motorstatus.items() }
+        print(f" ** Current {st} value:")
+        for key, val in currval.items():
+            print(f"  - {key}: {val:10.4f}")
     else:
         motorstatus = cax_status[device][motortype]
+        currval = float(motorstatus[0])
+        print(f" ** Current {st} value: {currval:10.4f}")
 
     # DEBUG
     # print(f"DEBUG: scantype = {scantype} -- {st}")
@@ -191,15 +169,16 @@ def parameters_ask(scantype: str, cax_status: dict):
     # END DEBUG
 
     # Guaraantees the order of limits for later comparison.
+    # currval = float(motorstatus[0])
     limits = (min(motorstatus[1], motorstatus[2]),
               max(motorstatus[1], motorstatus[2]))
-    print(f" ** Parameter limits: [{limits[0]:10.4f}, {limits[1]:10.4f}]")
+    print(f" ** Parameter limits:   [{limits[0]:10.4f}, {limits[1]:10.4f}]")
 
     scanargs = dict()
     scanargs['start']  = _ask_val(f"Enter start {st} position/angle: ", limits)
     scanargs['stop']   = _ask_val(f"Enter stop {st} position/angle: ", limits)
     scanargs['nsteps'] = int(_ask_val("Enter number of steps for scanning: ",
-                                      limits=(1, float('inf'))), limits)
+                                      limits=(1, float('inf'))))
     scanargs['dtime']  = _ask_val("Enter dwell time at each position (s): ",
                                   limits=(0, float('inf')))
     return scanargs
@@ -237,10 +216,10 @@ def main():
     h5file = HDF5File(filename, filedir='.')
 
     print("\n##### Starting {} scan #####\n".format(
-        ", ".join(SCAN_TYPES[st] for st in scantypes)
+        ", ".join(SCAN_TYPES[st][0] for st in scantypes)
     ))
     for choice in scantypes:
-        pv_name   = PV_SCAN_TYPES[choice]
+        pv_name   = SCAN_TYPES[choice][1]
         scanargs  = parameters_ask(choice, cax_status)
         print(f"\n### Starting {SCAN_TYPES[choice]} scan with parameters:\n"
               f" start    : {scanargs['start']:15.4f} mm,\n"
@@ -249,17 +228,23 @@ def main():
               f" interval : {scanargs['dtime']:15.4f} s\n")
 
         # Instantiate the device for the chosen scan type.
-        dev = device_picker(pv_name, cax)
+        dev = device_picker(choice, cax)
 
         # DEBUG
         print(f"### (main) DEBUG: device = {dev}\n###\n")
-        # DEBUG
+        # END DEBUG
 
         if dev is None:
             print(f" ERROR: No device found for scan type '{choice}'.")
             continue
         # Mirror scans need the motor attribute name.
         scanargs['motor'] = pv_name
+
+        # DEBUG
+        print(f"### (main) DEBUG: scanargs = {scanargs}\n###\n")
+        sys.exit(0)
+        # END DEBUG
+
         results = dev.device_scan(scanargs, h5file=h5file)
 
     print(f"\nData saved to {filename}.")
