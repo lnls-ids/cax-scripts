@@ -136,10 +136,6 @@ def parameters_ask(scantype: str, cax_status: dict):
     st = SCAN_TYPES[scantype][1]
     print(f"###\n###  {st} scan parameters\n###\n")
 
-    # DEBUG
-    # print(f"###### DEBUG:\n##### cax_status keys = {cax_status}\n#####\n")
-    # END DEBUG
-
     # Parameter limits.
     motortype   = SCAN_TYPES[scantype][1]
     device      = SCAN_TYPES[scantype][2]
@@ -159,17 +155,7 @@ def parameters_ask(scantype: str, cax_status: dict):
         currval = float(motorstatus[0])
         print(f" ** Current {st} value: {currval:10.4f}")
 
-    # DEBUG
-    # print(f"DEBUG: scantype = {scantype} -- {st}")
-    # print(f"DEBUG: cax_status keys = {list(cax_status.keys())}")
-    # print(f"DEBUG: device = {device}")
-    # print(f"DEBUG: motortype = {motortype}")
-    # print(f"DEBUG: cax_status['{device}'] keys = {cax_status[device].keys()}")
-    # print(f"DEBUG: motorstatus = {motorstatus}")
-    # END DEBUG
-
     # Guaraantees the order of limits for later comparison.
-    # currval = float(motorstatus[0])
     limits = (min(motorstatus[1], motorstatus[2]),
               max(motorstatus[1], motorstatus[2]))
     print(f" ** Parameter limits:   [{limits[0]:10.4f}, {limits[1]:10.4f}]")
@@ -230,20 +216,11 @@ def main():
         # Instantiate the device for the chosen scan type.
         dev = device_picker(choice, cax)
 
-        # DEBUG
-        print(f"### (main) DEBUG: device = {dev}\n###\n")
-        # END DEBUG
-
         if dev is None:
             print(f" ERROR: No device found for scan type '{choice}'.")
             continue
         # Mirror scans need the motor attribute name.
         scanargs['motor'] = pv_name
-
-        # DEBUG
-        print(f"### (main) DEBUG: scanargs = {scanargs}\n###\n")
-        sys.exit(0)
-        # END DEBUG
 
         results = dev.device_scan(scanargs, h5file=h5file)
 

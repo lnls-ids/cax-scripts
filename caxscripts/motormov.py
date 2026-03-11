@@ -348,10 +348,6 @@ class CAXCausticMove():
             scanargs['start'], scanargs['stop'], int(scanargs['nsteps'])
         )
 
-        # DEBUG
-        # print(f"\n### (device_scan) DEBUG: positions = {positions} \n###\n")
-        # END DEBUG
-
         t0 = time.time()
         for i, pos in enumerate(positions):
             print(f"Step: {i+1}/{len(positions)} -"
@@ -367,6 +363,7 @@ class CAXCausticMove():
                     'time': datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                     }
                 step.update(utils.snapshot_machine_state(self.cax))
+
                 utils.save_step(h5file, step)
                 results.append(step)
                 print(f" Ended step {i+1} -- snapshot saved. \n")

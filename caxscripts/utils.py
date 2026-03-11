@@ -324,7 +324,7 @@ def data_save(h5file, scaname, setmetadata, dvfimg, devname='dvf'):
 _DVF_IMAGE_KEY = 'image'
 
 # Keys inside a step dict whose values are DVF snapshot dicts (contain images).
-_DVF_KEYS = ('dvf1', 'dvf2')
+_DVF_KEYS = ('dvf_A1', 'dvf_B1')
 
 
 def _flatten_dict(d, prefix=''):
