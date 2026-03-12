@@ -4,6 +4,7 @@ from datetime import datetime
 import time
 import numpy as np
 from . import utils
+import matplotlib.pyplot as plt
 
 from siriuspy.devices.device import _PVAccessor
 
@@ -186,10 +187,13 @@ class CAXMirrorMove:
 class CAXSlitMove:
     """Class to control slit scan of CAX beamline."""
 
-    def __init__(self, caxctrl):
+    def __init__(self, caxctrl, devname='slit_A1'):
         """."""
-        self.cax = caxctrl
-        self.devname = 'CAX Slit'
+        self.cax        = caxctrl
+        self.devname    = devname
+        self.device     = getattr(self.cax, devname)
+        self.dev_status = utils.snapshot_machine_state(self.cax)
+        self.slit_image = self.dev_status['dvf_A1']['image']
 
     def device_status(self):
         """Show initial statuts of mirror."""
@@ -199,20 +203,12 @@ class CAXSlitMove:
             'LEFT'   : 'left blade position',
             'RIGHT'  : 'right blade position',
         }
-        slit_list = list(slit_descr.keys())
-
-        slits = list()
-        dev_status = dict()
-
-        # Get PVs.
-        for key, val in vars(self.cax.slit_A1.PVS).items():
-            pv = key.strip('CS').split('_')
-            # Select PVs.
-            if pv[0] in slit_list and pv[1] == 'MON':
-                v = self.cax.slit_A1[val]
-                slits.append((pv[0], v))
-        dev_status['slits'] = slits
-        return dev_status
+        self.dev_status = utils.snapshot_machine_state(self.cax)
+        for slit, vals in self.dev_status[self.devname].items():
+            print(f" {slit.upper():<10}: {vals[0]:10.4f}"
+                  f" [{vals[1]:10.4f}, {vals[2]:10.4f}]"
+                  f" ({'enabled' if vals[3] else 'disabled'})")
+        return self.dev_status
 
     def set_slit_pos(self, side, pos):
         """."""
@@ -225,20 +221,39 @@ class CAXSlitMove:
         side_func = side_func_dict[side]
         side_func(value=pos)
 
-    def set_slit_all(self, slit,
+    # # The methods below convert pixel intervals observed by the DVF
+    # # into actual motor positions.
+    # def _top_pos_from_pixels(self, pixel):
+    #     return -pixel * 0.01039 + 19.2
+
+    # def _bottom_pos_from_pixels(self, pixel):
+    #     return (pixel - 460) * 0.01041 + 37.3
+
+    # def _left_pos_from_pixels(self, pixel):
+    #     return -pixel * 0.007126 + 44.8
+
+    # def _right_pos_from_pixels(self, pixel):
+    #     return (pixel - 174) * 0.007126 + 45.9
+
+    def set_slit_all(self,
                      top_pos, bottom_pos,
                      left_pos, right_pos):
         """."""
 
         # Calls robust_device_motor_move from _PVAccessor
-        slit.top    = top_pos
-        slit.bottom = bottom_pos
-        slit.left   = left_pos
-        slit.right  = right_pos
-        # slit.move_robust_top(value=top_pos)
-        # slit.move_robust_bottom(value=bottom_pos)
-        # slit.move_robust_left(value=left_pos)
-        # slit.move_robust_right(value=right_pos)
+        self.device.top    = top_pos
+        self.device.bottom = bottom_pos
+        self.device.left   = left_pos
+        self.device.right  = right_pos
+
+    def set_slit_all_from_pixels(self,
+                     top, bottom, left, right):
+        """Set positions of all slits calculated from image pixels."""
+        # Calls robust_device_motor_move from _PVAccessor
+        self.device.top    = self._top_pos_from_pixels(top)
+        self.device.bottom = self._bottom_pos_from_pixels(bottom)
+        self.device.left   = self._left_pos_from_pixels(left)
+        self.device.right  = self._right_pos_from_pixels(right)
 
     def slit_positions(self, m=100, n=100):
         """."""
@@ -256,29 +271,30 @@ class CAXSlitMove:
         Returns:
             list of dicts, one per grid point.
         """
-        slit    = scanargs['slit']
-        xposes  = scanargs['xpositions']
-        yposes  = scanargs['ypositions']
-        sqsize  = scanargs.get('sqsize', 0.4)
+        slit   = scanargs['slit']
+        top    = scanargs['top_pos']
+        bottom = scanargs['bottom_pos']
+        left   = scanargs['left_pos']
+        right  = scanargs['right_pos']
+        # winsize_x, winsize_y  = scanargs['winsize']
+
         results = []
         t0 = time.time()
 
         # Record initial machine state before any movement.
-        step0 = {'step': 0, 'scan_type': 'slit', 'initial_state': True}
+        step0 = {'step': 0, 'scan_type': slit, 'initial_state': True}
         step0.update(utils.snapshot_machine_state(self.cax))
         results.append(step0)
         utils.save_step(h5file, step0)
         step_idx = 1
 
-        for i, posx in enumerate(xposes):
-            for j, posy in enumerate(yposes):
-                print(f"Step: Row {i+1}/{len(xposes)},"
-                      f" Col {j+1}/{len(yposes)} -"
-                      f" slit center ({posx:.3f}, {posy:.3f})")
+        for j, topp in enumerate(top):
+           for i, leftp in enumerate(left):
+                print(f"Step: Row {i+1}/{len(left)},"
+                      f" Col {j+1}/{len(top)} -"
+                      f" slit center ({leftp:.3f}, {topp:.3f})")
 
-                self.set_slit_all(slit,
-                                  posy + sqsize/2, posy - sqsize/2,
-                                  posx - sqsize/2, posx + sqsize/2)
+                self.set_slit_all(topp, bottom[j], leftp, right[i])
                 time.sleep(scanargs.get('dtime', 0))
 
                 step = {
@@ -292,6 +308,9 @@ class CAXSlitMove:
 
         elapsed = (time.time() - t0) / 60
         print(f'\nElapsed time [min]: {elapsed:.2f}')
+
+
+        self.set_slit_all(*scanargs['slit_initial_status'])
         return results
 
 
@@ -437,3 +456,8 @@ class CAXLensMove(_PVAccessor):
         elapsed = (time.time() - t0) / 60
         print(f'\nElapsed time [min]: {elapsed:.2f}')
         return results
+
+
+IMG_THRESHOLD = 100
+
+

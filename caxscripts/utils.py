@@ -4,7 +4,7 @@ import time
 import json
 import numpy as np
 from siriuspy.devices import CAXCtrl, DVF
-
+import matplotlib.pyplot as plt
 
 # # parameters ##
 
@@ -213,44 +213,44 @@ def snapshot_machine_state(cax: CAXCtrl):
             'photocollector': caxm.photocurrent_signal
         }
 
-    caxs1 = cax.slit_A1
-    slit1_status = {
-            'top'           : [caxs1.top_mon,
-                               caxs1.top_lolm,
-                               caxs1.top_hilm,
-                               caxs1.top_enbl],
-            'bottom'        : [caxs1.bottom_mon,
-                               caxs1.bottom_lolm,
-                               caxs1.bottom_hilm,
-                               caxs1.bottom_enbl],
-            'left'          : [caxs1.left_mon,
-                               caxs1.left_lolm,
-                               caxs1.left_hilm,
-                               caxs1.left_enbl],
-            'right'         : [caxs1.right_mon,
-                               caxs1.right_lolm,
-                               caxs1.right_hilm,
-                               caxs1.right_enbl]
+    caxsA1 = cax.slit_A1
+    slitA1_status = {
+            'top'           : [caxsA1.top_mon,
+                               caxsA1.top_lolm,
+                               caxsA1.top_hilm,
+                               caxsA1.top_enbl],
+            'bottom'        : [caxsA1.bottom_mon,
+                               caxsA1.bottom_lolm,
+                               caxsA1.bottom_hilm,
+                               caxsA1.bottom_enbl],
+            'left'          : [caxsA1.left_mon,
+                               caxsA1.left_lolm,
+                               caxsA1.left_hilm,
+                               caxsA1.left_enbl],
+            'right'         : [caxsA1.right_mon,
+                               caxsA1.right_lolm,
+                               caxsA1.right_hilm,
+                               caxsA1.right_enbl]
         }
 
-    caxs2 = cax.slit_B1
-    slit2_status = {
-            'top'           : [caxs2.top_mon,
-                               caxs2.top_lolm,
-                               caxs2.top_hilm,
-                               caxs2.top_enbl],
-            'bottom'        : [caxs2.bottom_mon,
-                               caxs2.bottom_lolm,
-                               caxs2.bottom_hilm,
-                               caxs2.bottom_enbl],
-            'left'          : [caxs2.left_mon,
-                               caxs2.left_lolm,
-                               caxs2.left_hilm,
-                               caxs2.left_enbl],
-            'right'         : [caxs2.right_mon,
-                               caxs2.right_lolm,
-                               caxs2.right_hilm,
-                               caxs2.right_enbl]
+    caxsB1 = cax.slit_B1
+    slitB1_status = {
+            'top'           : [caxsB1.top_mon,
+                               caxsB1.top_lolm,
+                               caxsB1.top_hilm,
+                               caxsB1.top_enbl],
+            'bottom'        : [caxsB1.bottom_mon,
+                               caxsB1.bottom_lolm,
+                               caxsB1.bottom_hilm,
+                               caxsB1.bottom_enbl],
+            'left'          : [caxsB1.left_mon,
+                               caxsB1.left_lolm,
+                               caxsB1.left_hilm,
+                               caxsB1.left_enbl],
+            'right'         : [caxsB1.right_mon,
+                               caxsB1.right_lolm,
+                               caxsB1.right_hilm,
+                               caxsB1.right_enbl]
         }
 
     # DVF1 status accounts for caustic scans.
@@ -280,8 +280,8 @@ def snapshot_machine_state(cax: CAXCtrl):
 
     return {
         'mirror'  : mirror_status,
-        'slit_A1' : slit1_status,
-        'slit_B1' : slit2_status,
+        'slit_A1' : slitA1_status,
+        'slit_B1' : slitB1_status,
         'dvf_A1'  : dvfA1_status,
         'dvf_B1'  : dvf_B1_status,
     }
@@ -397,3 +397,63 @@ def save_step(h5file, step, step_index=None):
             dsetdata=image,
             dsetmetadata=dset_attrs,
         )
+
+
+# Slit limits defined from DVF images with slits fully open.
+# This avoids long motor moves and discrepancies between
+# hard limits and those defined in the front end.
+SLIT_A1_TOP_LIMS = {
+    'TOP'    : 19.5,
+    'BOTTOM' : 37.5,
+    'LEFT'   : 47.5,
+    'RIGHT'  : 46.5,
+}
+
+
+def slit_open(device_mv, cax_status):
+    """Open the slits."""
+    devname = device_mv.devname
+    slit_status = [
+        cax_status[devname][slit][0]
+        for slit in ('top', 'bottom', 'left', 'right')
+        ]
+
+    device        = device_mv.device
+    device.top    = SLIT_A1_TOP_LIMS['TOP']
+    device.bottom = SLIT_A1_TOP_LIMS['BOTTOM']
+    device.left   = SLIT_A1_TOP_LIMS['LEFT']
+    device.right  = SLIT_A1_TOP_LIMS['RIGHT']
+
+    return slit_status
+
+
+IMG_THRESHOLD = 100
+
+
+def image_show_slit_boundary(img):
+    """Determine slit boundaries from the image and display them."""
+    roi = img > IMG_THRESHOLD
+    hor, vert = img.shape
+
+    left = min(vert - 1, np.argmax(roi.sum(axis=0) > 0))
+    right = max(0, vert - 1 - np.argmax(roi[:, ::-1].sum(axis=0) > 0))
+
+    top = min(hor - 1, np.argmax(roi.sum(axis=1) > 0))
+    bottom = max(0, hor - 1 - np.argmax(roi[::-1, :].sum(axis=1) > 0))
+
+    fig, ax = plt.subplots()
+    pix_to_um = 0.48
+    print("\n ** Current slit boundaries at DVF (in microns):\n"
+          f"      top: {top    * pix_to_um:.2f},\n"
+          f"   bottom: {bottom * pix_to_um:.2f},\n"
+          f"     left: {left   * pix_to_um:.2f},\n"
+          f"    right: {right  * pix_to_um:.2f}\n")
+    import matplotlib.patches as patches
+    rect = patches.Rectangle((left, top), right - left, bottom - top,
+                            linewidth=1, edgecolor='r', facecolor='none')
+    ax.add_patch(rect)
+    ax.imshow(img)
+    plt.show(block=False)
+    plt.pause(0.1)
+
+    return [top, bottom, left, right]
