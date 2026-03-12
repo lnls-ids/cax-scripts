@@ -192,7 +192,7 @@ def slit_parameters_ask(scantype: str, cax_status: dict, cax: CAXCtrl):
     vsize = np.abs(top - bottom)
     print("\n * Current window size: "
           f"{hsize:10.4f} pixels x {vsize:10.4f} pixels")
-    pixel_size = 0.48e-3  # mm
+    # pixel_size = 0.48e-3  # mm per pixel
 
     scanargs = dict()
     scanargs['slit'] = devname
@@ -225,11 +225,6 @@ def slit_parameters_ask(scantype: str, cax_status: dict, cax: CAXCtrl):
     scanargs['top_pos']    = _top_pos_from_pixels(ycenter_pos_pixels - win_y / 2)
     #
     scanargs['winsize'] = (win_x, win_y)
-
-    print(f"\n\n##### slit parameters ask : center positions X = \n{xcenter_pos_pixels}\n#####\n ")
-    print(f"\n\n##### slit parameters ask : center positions Y = \n{ycenter_pos_pixels}\n#####\n ")
-    print(f"\n\n##### slit parameters ask : scanargs = \n{scanargs}\n#####\n ")
-
 
     return device_mv, scanargs
 

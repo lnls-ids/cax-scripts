@@ -105,24 +105,33 @@ class CAXMirrorMove:
         utils.save_step(h5file, step0)
 
         for i, pos in enumerate(positions):
-            print(f"Step: {i+1}/{len(positions)} -"
+            print(f"\n Step: {i+1}/{len(positions)} -"
                   f" Moving mirror {motor} to {pos}")
             self.m1.move(motor, pos)
             time.sleep(scanargs.get('dtime', 0))
 
-            step = {
-                'step': i + 1,
-                'scan_type': 'mirror',
-                'scan_motor': motor,
-                'initial_state': False,
-                'time': datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            }
-            step.update(utils.snapshot_machine_state(self.cax))
-            results.append(step)
-            utils.save_step(h5file, step)
+            try:
+                step = {
+                    'step': i + 1,
+                    'scan_type': 'mirror',
+                    'scan_motor': motor,
+                    'initial_state': False,
+                    'time': datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                }
+                step.update(utils.snapshot_machine_state(self.cax))
+                results.append(step)
+                utils.save_step(h5file, step)
+                print(f" Ended step {i+1} -- snapshot saved. \n")
+            except Exception as err:
+                print(f" Could not save step {i+1}: \n {err}\n")
+                continue
 
         elapsed = (time.time() - t0) / 60
         print(f'\nElapsed time [min]: {elapsed:.2f}')
+
+        # Return motor to initial position.
+        self.m1.move(motor, step0['mirror'][motor][0])
+
         return results
 
     """
@@ -271,18 +280,25 @@ class CAXSlitMove:
         Returns:
             list of dicts, one per grid point.
         """
-        slit   = scanargs['slit']
-        top    = scanargs['top_pos']
-        bottom = scanargs['bottom_pos']
-        left   = scanargs['left_pos']
-        right  = scanargs['right_pos']
-        # winsize_x, winsize_y  = scanargs['winsize']
+        slit    = scanargs['slit']
+        top     = scanargs['top_pos']
+        bottom  = scanargs['bottom_pos']
+        left    = scanargs['left_pos']
+        right   = scanargs['right_pos']
+        winsize = scanargs['winsize']
 
         results = []
         t0 = time.time()
 
         # Record initial machine state before any movement.
-        step0 = {'step': 0, 'scan_type': slit, 'initial_state': True}
+        step0 = {
+            'time': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            'scan_type': slit,
+            'step': 0,
+            'step_row': None,
+            'step_col': None,
+            'initial_state': True
+            }
         step0.update(utils.snapshot_machine_state(self.cax))
         results.append(step0)
         utils.save_step(h5file, step0)
@@ -298,8 +314,13 @@ class CAXSlitMove:
                 time.sleep(scanargs.get('dtime', 0))
 
                 step = {
-                    'step': step_idx, 'step_row': i, 'step_col': j,
-                    'scan_type': 'slit',
+                    'time': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                    'scan_type': slit,
+                    'step': step_idx,
+                    'step_row': i,
+                    'step_col': j,
+                    'window_size' : winsize,
+                    'initial_state': False,
                 }
                 step.update(utils.snapshot_machine_state(self.cax))
                 results.append(step)
@@ -309,7 +330,7 @@ class CAXSlitMove:
         elapsed = (time.time() - t0) / 60
         print(f'\nElapsed time [min]: {elapsed:.2f}')
 
-
+        # Return to initial slit positions after scan.
         self.set_slit_all(*scanargs['slit_initial_status'])
         return results
 
