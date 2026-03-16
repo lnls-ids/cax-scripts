@@ -5,7 +5,6 @@
 from datetime import datetime
 import matplotlib.pyplot as plt
 import numpy as np
-from yaml import scan
 
 from caxscripts import utils
 from caxscripts.h5file import HDF5File
