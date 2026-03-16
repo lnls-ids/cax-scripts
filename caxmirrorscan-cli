@@ -6,7 +6,6 @@ from datetime import datetime
 import matplotlib.pyplot as plt
 import numpy as np
 from yaml import scan
-from zmq import device
 
 from caxscripts import utils
 from caxscripts.h5file import HDF5File
@@ -305,7 +304,10 @@ def main():
         scanargs['motor'] = SCAN_TYPES[choice][1]
 
         # sys.exit(0)
-        results = dev.device_scan(scanargs, h5file=h5file)
+        # Run the scan for the device with the specified parameters.
+        # Results can be accessed by dev.results after the scan.
+        dev.device_scan(scanargs, h5file=h5file)
+
 
     print(f"\nData saved to {filename}.")
 

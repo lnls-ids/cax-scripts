@@ -3,6 +3,8 @@
 from datetime import datetime
 import time
 import numpy as np
+
+from caxscripts import h5file
 from . import utils
 import matplotlib.pyplot as plt
 
@@ -31,6 +33,7 @@ class CAXMirrorMove:
         self.cax     = caxctrl
         self.m1      = self.cax.mirror
         self.devname = 'CAX Mirror'
+        self.results = None
 
     def device_status(self):
         """Show current status of mirror motors."""
@@ -75,6 +78,21 @@ class CAXMirrorMove:
               end="", flush=True)
         return count + 1
 
+    def _step_update_and_save(self, h5file, step_index, motor, step_type):
+        """Update the step dict with current machine state and save to HDF5 file."""
+        step = {
+            'step': step_index,
+            'scan_type': 'mirror',
+            'scan_motor': motor,
+            'state': step_type,
+            'time': datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        }
+        step.update(utils.snapshot_machine_state(self.cax))
+        self.results.append(step)
+        utils.save_step(h5file, step)
+
+        return step
+
     def device_scan(self, scanargs, h5file=None):
         """Scan a mirror motor and return collected data.
 
@@ -89,50 +107,40 @@ class CAXMirrorMove:
         positions = np.linspace(
             scanargs['start'], scanargs['stop'], int(scanargs['nsteps'])
         )
-        results = []
+
+        self.results = []
         t0 = time.time()
 
         # Record initial machine state before any movement.
-        step0 = {
-            'step': 0,
-            'scan_type': 'mirror',
-            'scan_motor': motor,
-            'initial_state': True,
-            'time': datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            }
-        step0.update(utils.snapshot_machine_state(self.cax))
-        results.append(step0)
-        utils.save_step(h5file, step0)
+        step0 = self._step_update_and_save(h5file, 0, motor,
+                                          step_type='scanning')  
 
-        for i, pos in enumerate(positions):
-            print(f"\n Step: {i+1}/{len(positions)} -"
+        for idx, pos in enumerate(positions):
+            print(f"\n Step: {idx+1}/{len(positions)} -"
                   f" Moving mirror {motor} to {pos}")
             self.m1.move(motor, pos)
             time.sleep(scanargs.get('dtime', 0))
 
             try:
-                step = {
-                    'step': i + 1,
-                    'scan_type': 'mirror',
-                    'scan_motor': motor,
-                    'initial_state': False,
-                    'time': datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                }
-                step.update(utils.snapshot_machine_state(self.cax))
-                results.append(step)
-                utils.save_step(h5file, step)
-                print(f" Ended step {i+1} -- snapshot saved. \n")
+                self._step_update_and_save(h5file, idx+1, motor,
+                                           step_type='scanning')
+                print(f" Ended step {idx+1} -- snapshot saved. \n")
             except Exception as err:
-                print(f" Could not save step {i+1}: \n {err}\n")
+                print(f" Could not save step {idx+1}: \n {err}\n")
                 continue
-
-        elapsed = (time.time() - t0) / 60
-        print(f'\nElapsed time [min]: {elapsed:.2f}')
 
         # Return motor to initial position.
         self.m1.move(motor, step0['mirror'][motor][0])
-
-        return results
+        
+        try:
+            self._step_update_and_save(h5file, len(positions), motor,
+                                       step_type='final')
+            print(" Ended final step -- snapshot saved. \n")
+        except Exception as err:
+            print(f" Could not save final step: \n {err}\n")
+        
+        elapsed = (time.time() - t0) / 60
+        print(f'\nElapsed time [min]: {elapsed:.2f}')
 
     """
     Dada a posicao (ry, tx, y1, y2, y3), a posição virtual (x, y, rx, ry, rz)
@@ -203,6 +211,7 @@ class CAXSlitMove:
         self.device     = getattr(self.cax, devname)
         self.dev_status = utils.snapshot_machine_state(self.cax)
         self.slit_image = self.dev_status['dvf_A1']['image']
+        self.results    = None
 
     def device_status(self):
         """Show initial statuts of mirror."""
@@ -269,6 +278,24 @@ class CAXSlitMove:
         # 2 arrays of slit center positions: x and y
         raise NotImplementedError
 
+    def _step_update_and_save(self, h5file, slit, step_index, window, step_type):
+        """Update the step dict with current machine state and save to HDF5 file."""
+        (i, j, winsize) = window
+        step = {
+            'time': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            'scan_type': slit,
+            'step': step_index,
+            'step_row': i,
+            'step_col': j,
+            'window_size' : winsize,
+            'state': step_type,
+        }
+        step.update(utils.snapshot_machine_state(self.cax))
+        self.results.append(step)
+        utils.save_step(h5file, step)
+
+        return step
+    
     def device_scan(self, scanargs, h5file=None):
         """Scan slit positions and return collected data.
 
@@ -287,21 +314,14 @@ class CAXSlitMove:
         right   = scanargs['right_pos']
         winsize = scanargs['winsize']
 
-        results = []
+        self.results = []
         t0 = time.time()
 
         # Record initial machine state before any movement.
-        step0 = {
-            'time': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            'scan_type': slit,
-            'step': 0,
-            'step_row': None,
-            'step_col': None,
-            'initial_state': True
-            }
-        step0.update(utils.snapshot_machine_state(self.cax))
-        results.append(step0)
-        utils.save_step(h5file, step0)
+        self._step_update_and_save(h5file, slit, 0,
+                                   (None, None, winsize),
+                                   step_type='initial')
+                                           
         step_idx = 1
 
         for j, topp in enumerate(top):
@@ -313,26 +333,29 @@ class CAXSlitMove:
                 self.set_slit_all(topp, bottom[j], leftp, right[i])
                 time.sleep(scanargs.get('dtime', 0))
 
-                step = {
-                    'time': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                    'scan_type': slit,
-                    'step': step_idx,
-                    'step_row': i,
-                    'step_col': j,
-                    'window_size' : winsize,
-                    'initial_state': False,
-                }
-                step.update(utils.snapshot_machine_state(self.cax))
-                results.append(step)
-                utils.save_step(h5file, step)
+                try:
+                    self._step_update_and_save(h5file, slit, step_idx,
+                                               (i, j, winsize),
+                                               step_type='scanning')
+                    print(f" Ended step Row {i+1}, Col {j+1} -- snapshot saved. \n")
+                except Exception as err:
+                    print(f" Could not save step Row {i+1}, Col {j+1}: \n {err}\n")
+                    continue
                 step_idx += 1
+
+        # Return to initial slit positions after scan.
+        self.set_slit_all(*scanargs['slit_initial_status'])
+        try:
+            self._step_update_and_save(h5file, slit, step_idx,
+                                       (None, None, winsize),
+                                       step_type='final')
+            print(" Ended final step -- snapshot saved. \n")
+        except Exception as err:
+            print(f" Could not save final step: \n {err}\n")
 
         elapsed = (time.time() - t0) / 60
         print(f'\nElapsed time [min]: {elapsed:.2f}')
 
-        # Return to initial slit positions after scan.
-        self.set_slit_all(*scanargs['slit_initial_status'])
-        return results
 
 
 # ----- caustic ------- #
@@ -344,6 +367,7 @@ class CAXCausticMove():
         """."""
         self.cax     = caxctrl
         self.devname = 'CAX Caustic'
+        self.results  = None
 
     def device_status(self):
         """Show initial statuts of caustic motor."""
@@ -359,6 +383,20 @@ class CAXCausticMove():
         """."""
         return self.cax.dvf_B1.z_mon
 
+    def _step_update_and_save(self, h5file, step_index, step_type):
+        """Update the step dict with current machine state and save to HDF5 file."""
+        step = {
+            'step': step_index,
+            'scan_type': 'caustic',
+            'state': step_type,
+            'time': datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            }
+        step.update(utils.snapshot_machine_state(self.cax))
+        utils.save_step(h5file, plt.step)
+        self.results.append(step)
+
+        return step
+
     def device_scan(self, scanargs, h5file=None):
         """Scan detector z position (caustic) and return collected data.
 
@@ -370,50 +408,43 @@ class CAXCausticMove():
             list of dicts, one per scan step.
         """
         # List for storing results of each step, to be returned at the end.
-        results = []
+        self.results = []
+        t0 = time.time()
 
         # Record initial machine state before any movement.
-        step0 = {
-            'step': 0,
-            'scan_type': 'caustic',
-            'initial_state': True,
-            'time': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            }
-        step0.update(utils.snapshot_machine_state(self.cax))
-        results.append(step0)
-        utils.save_step(h5file, step0)
+        step0 = self._step_update_and_save(h5file, 0,
+                                           step_type='initial')
 
         # Scan positions.
         positions = np.linspace(
             scanargs['start'], scanargs['stop'], int(scanargs['nsteps'])
         )
 
-        t0 = time.time()
-        for i, pos in enumerate(positions):
-            print(f"Step: {i+1}/{len(positions)} -"
+        for idx, pos in enumerate(positions):
+            print(f"Step: {idx+1}/{len(positions)} -"
                   f" Moving detector to z = {pos:.3f}")
             self.set_detector_pos(pos)
             time.sleep(scanargs.get('dtime', 0))
 
             try:
-                step = {
-                    'step': i + 1,
-                    'scan_type': 'caustic',
-                    'initial_state': False,
-                    'time': datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                    }
-                step.update(utils.snapshot_machine_state(self.cax))
-
-                utils.save_step(h5file, step)
-                results.append(step)
-                print(f" Ended step {i+1} -- snapshot saved. \n")
+                self._step_update_and_save(h5file, idx+1,
+                                           step_type='scanning')
+                print(f" Ended step {idx+1} -- snapshot saved. \n")
             except Exception as err:
-                print(f" Could not save step {i+1}: \n {err}\n")
+                print(f" Could not save step {idx+1}: \n {err}\n")
                 continue
+
+        # Return to initial position after scan.
+        self.set_detector_pos(step0['dvf_B1']['z_pos'][0])
+        try:
+            self._step_update_and_save(h5file, len(positions),
+                                       step_type='final')
+            print(" Ended final step -- snapshot saved. \n")
+        except Exception as err:
+            print(f" Could not save final step: \n {err}\n")
 
         elapsed = (time.time() - t0) / 60
         print(f'\nElapsed time [min]: {elapsed:.2f}')
-        return results
 
 
 # ------- lens -------- #
@@ -423,9 +454,10 @@ class CAXLensMove(_PVAccessor):
 
     def __init__(self, caxctrl, positions_number=100):
         """."""
-        self.cax     = caxctrl
-        self.devname = 'CAX Lens'
+        self.cax             = caxctrl
+        self.devname         = 'CAX Lens'
         self.position_number = positions_number
+        self.results         = None
 
     def get_lens_pos(self):
         """."""
@@ -435,6 +467,20 @@ class CAXLensMove(_PVAccessor):
         """."""
         self.cax.dvf_B1.lens = pos  # this now uses _PVAccessor's robust moving methods
         # !: waiting time after setting
+
+    def _step_update_and_save(self, h5file, step_index, step_type):
+        """Update the step dict with current machine state and save to HDF5 file."""
+        step = {
+            'step': step_index,
+            'scan_type': 'lens',
+            'state': step_type,
+            'time': datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            }
+        step.update(utils.snapshot_machine_state(self.cax))        
+        utils.save_step(h5file, plt.step)
+        self.results.append(step)
+
+        return step
 
     def device_scan(self, scanargs, h5file=None):
         """Scan lens position and return collected data.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -449,34 +495,38 @@ class CAXLensMove(_PVAccessor):
         positions = np.linspace(
             scanargs['start'], scanargs['stop'], int(scanargs['nsteps'])
         )
-        results = []
+        self.results = []
         t0 = time.time()
 
         # Record initial machine state before any movement.
-        step0 = {'step': 0, 'scan_type': 'lens', 'initial_state': True}
-        step0.update(utils.snapshot_machine_state(self.cax))
-        results.append(step0)
-        utils.save_step(h5file, step0)
+        step0 = self._step_update_and_save(h5file, 0, 
+                                           step_type='initial')
 
-        for i, pos in enumerate(positions):
-            print(f"Step {i+1}/{len(positions)} -"
+        for idx, pos in enumerate(positions):
+            print(f"Step {idx+1}/{len(positions)} -"
                   f" Moving lens to {pos:.3f}")
             self.set_lens_pos(pos)
             time.sleep(scanargs.get('dtime', 0))
 
-            step = {
-                'step': i + 1,
-                'scan_type': 'lens',
-                'initial_state': False,
-                'time': datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                }
-            step.update(utils.snapshot_machine_state(self.cax))
-            results.append(step)
-            utils.save_step(h5file, step)
+            try:
+                self._step_update_and_save(h5file, idx+1,
+                                           step_type='scanning')
+                print(f" Ended step {idx+1} -- snapshot saved. \n")
+            except Exception as err:
+                print(f" Could not save step {idx+1}: \n {err}\n")
+                continue
+        
+        # Return to initial position after scan.
+        self.set_lens_pos(step0['dvf_B1']['lens_pos'][0])
+        try:
+            self._step_update_and_save(h5file, len(positions),
+                                       step_type='final')
+            print(" Ended final step -- snapshot saved. \n")
+        except Exception as err:
+            print(f" Could not save final step: \n {err}\n")
 
         elapsed = (time.time() - t0) / 60
         print(f'\nElapsed time [min]: {elapsed:.2f}')
-        return results
 
 
 IMG_THRESHOLD = 100
