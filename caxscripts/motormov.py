@@ -3,8 +3,6 @@
 from datetime import datetime
 import time
 import numpy as np
-
-from caxscripts import h5file
 from . import utils
 import matplotlib.pyplot as plt
 
