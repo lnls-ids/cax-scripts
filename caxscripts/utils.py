@@ -338,6 +338,8 @@ def _flatten_dict(d, prefix=''):
         full_key = f'{prefix}{key}' if not prefix else f'{prefix}.{key}'
         if isinstance(val, dict):
             flat.update(_flatten_dict(val, prefix=full_key))
+        elif val is None:
+            flat[full_key] = 'N/A'
         elif not isinstance(val, np.ndarray):
             flat[full_key] = val
     return flat
