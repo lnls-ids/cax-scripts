@@ -29,8 +29,8 @@ SCAN_TYPES = {
 }
 
 
-WSIZE_V = 460
-WSIZE_H = 174
+WSIZE_V = 467
+WSIZE_H = 178
 
 
 def scan_menu_select():
@@ -149,16 +149,16 @@ def _general_parameters_ask(motortype, limits):
 # The methods below convert pixel intervals observed by the DVF
 # into actual motor positions.
 def _top_pos_from_pixels(pixel):
-    return -pixel * 0.01039 + 19.2
+    return -pixel * 0.01039 + 19.1
 
 def _bottom_pos_from_pixels(pixel):
-    return (pixel - WSIZE_V) * 0.01041 + 37.3
+    return (pixel - WSIZE_V) * 0.01041 + 37.4
 
 def _left_pos_from_pixels(pixel):
-    return -pixel * 0.007126 + 44.8
+    return -pixel * 0.007126 + 44.3
 
 def _right_pos_from_pixels(pixel):
-    return (pixel - WSIZE_H) * 0.007126 + 45.9
+    return (pixel - WSIZE_H) * 0.007126 + 46.4
 
 
 def slit_parameters_ask(scantype: str, cax_status: dict, cax: CAXCtrl):

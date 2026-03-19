@@ -131,7 +131,7 @@ class CAXMirrorMove:
         self.m1.move(motor, step0['mirror'][motor][0])
         
         try:
-            self._step_update_and_save(h5file, len(positions), motor,
+            self._step_update_and_save(h5file, idx+2, motor,
                                        step_type='final')
             print(" Ended final step -- snapshot saved. \n")
         except Exception as err:
@@ -437,7 +437,7 @@ class CAXCausticMove():
         # Return to initial position after scan.
         self.set_detector_pos(step0['dvf_B1']['z_pos'][0])
         try:
-            self._step_update_and_save(h5file, len(positions),
+            self._step_update_and_save(h5file, idx+2,
                                        step_type='final')
             print(" Ended final step -- snapshot saved. \n")
         except Exception as err:
@@ -521,7 +521,7 @@ class CAXLensMove(_PVAccessor):
         # Return to initial position after scan.
         self.set_lens_pos(step0['dvf_B1']['lens_pos'][0])
         try:
-            self._step_update_and_save(h5file, len(positions),
+            self._step_update_and_save(h5file, idx+2,
                                        step_type='final')
             print(" Ended final step -- snapshot saved. \n")
         except Exception as err:
