@@ -4,7 +4,6 @@ from datetime import datetime
 import time
 import numpy as np
 from . import utils
-import matplotlib.pyplot as plt
 
 from siriuspy.devices.device import _PVAccessor
 
@@ -80,6 +79,7 @@ class CAXMirrorMove:
         """Update the step dict with current machine state and save to HDF5 file."""
         step = {
             'step': step_index,
+            'scan_name': 'mirror',
             'scan_type': 'mirror',
             'scan_motor': motor,
             'state': step_type,
@@ -385,12 +385,14 @@ class CAXCausticMove():
         """Update the step dict with current machine state and save to HDF5 file."""
         step = {
             'step': step_index,
-            'scan_type': 'caustic',
+            'scan_name': 'caustic',
+            'scan_type': 'dvf_B1',
+            'scab_motor': 'z',
             'state': step_type,
             'time': datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             }
         step.update(utils.snapshot_machine_state(self.cax))
-        utils.save_step(h5file, plt.step)
+        utils.save_step(h5file, step)
         self.results.append(step)
 
         return step
@@ -470,12 +472,14 @@ class CAXLensMove(_PVAccessor):
         """Update the step dict with current machine state and save to HDF5 file."""
         step = {
             'step': step_index,
-            'scan_type': 'lens',
+            'scan_name': 'lens',
+            'scan_type': 'dvf_B1',
+            'scan_motor': 'lens',
             'state': step_type,
             'time': datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             }
         step.update(utils.snapshot_machine_state(self.cax))        
-        utils.save_step(h5file, plt.step)
+        utils.save_step(h5file, step)
         self.results.append(step)
 
         return step
