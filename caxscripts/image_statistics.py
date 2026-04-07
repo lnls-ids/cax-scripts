@@ -202,10 +202,10 @@ class Histogram2DAnalyzer:
         """Evaluate a normalized 2D Gaussian at coords = (x, y).
 
         Arguments:
-            coords: tuple (x, y) of coordinate arrays.
-            mux, muy: means.
-            sigx, sigy: standard deviations.
-            covxy: covariance between x and y.
+            coords     : tuple (x, y) of coordinate arrays.
+            mux, muy   : means in x and y, respectively.
+            sigx, sigy : standard deviations in x and y, respectively.
+            covxy      : covariance between x and y.
 
         Returns:
             Gaussian values at the given coordinates.
