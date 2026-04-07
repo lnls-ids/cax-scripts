@@ -82,12 +82,13 @@ class Histogram2DAnalyzer:
             xedges: 1D array of x bin edges (length img.shape[0] + 1).
             yedges: 1D array of y bin edges (length img.shape[1] + 1).
         """
-        self.img = np.asarray(img, dtype=float)
-        self.xedges = np.asarray(xedges, dtype=float)
-        self.yedges = np.asarray(yedges, dtype=float)
-        self.hprm = None
+        self.img               = np.asarray(img,    dtype=float)
+        self.xedges            = np.asarray(xedges, dtype=float)
+        self.yedges            = np.asarray(yedges, dtype=float)
+        self.hprm_mom          = None
+        self.hprm_fit          = None
         self.optimal_threshold = None
-        self.img_thresholded = None
+        self.img_thresholded   = None
 
     @classmethod
     def from_gaussian(
@@ -305,7 +306,7 @@ class Histogram2DAnalyzer:
             covmat
         )
 
-        self.hprm = {
+        self.hprm_mom = {
             "mux": mux, "muy": muy,
             "cov": covmat,
             "sigx": sigx, "sigy": sigy,
@@ -313,9 +314,9 @@ class Histogram2DAnalyzer:
             "theta": theta, "evecs": evecs,
             "xcenters": xcenters, "ycenters": ycenters,
         }
-        return self.hprm
+        return self.hprm_mom
 
-    def fit(self, hprm=None):
+    def fit(self, hprm=None, img=None):
         """Fit a 2D Gaussian to self.img via nonlinear least squares.
 
         Uses hprm (or self.hprm, or freshly computed moments) as the
@@ -323,14 +324,20 @@ class Histogram2DAnalyzer:
 
         Arguments:
             hprm: optional pre-computed moments dict.
+            img: optional array to fit instead of self.img
+                (e.g. self.img_thresholded).
 
         Returns:
             hprm: fitted parameters dictionary; also stored in self.hprm.
         """
         if hprm is None:
-            hprm = (
-                self.hprm if self.hprm is not None else self.compute_moments()
-            )
+            if self.hprm_mom is None:
+                self.compute_moments()
+            hprm = self.hprm_mom
+
+        # Default to self.img if no alternative is provided.
+        if img is None:
+            img = self.img
 
         xcenters = hprm["xcenters"]
         ycenters = hprm["ycenters"]
@@ -339,11 +346,13 @@ class Histogram2DAnalyzer:
         # Normalize to PDF so amplitude matches the normalized Gaussian.
         dx = xcenters[1] - xcenters[0]
         dy = ycenters[1] - ycenters[0]
-        img_norm = self.img / (self.img.sum() * dx * dy)
+        img_norm = img / (img.sum() * dx * dy)
 
         p0 = [
-            hprm["mux"], hprm["muy"],
-            hprm["sigx"], hprm["sigy"],
+            hprm["mux"],
+            hprm["muy"],
+            hprm["sigx"],
+            hprm["sigy"],
             hprm["cov"][0, 1],
         ]
         popt, _ = curve_fit(
@@ -355,19 +364,23 @@ class Histogram2DAnalyzer:
 
         sx, sy, sxy = popt[2], popt[3], popt[4]
         covmat = np.array([[sx**2, sxy], [sxy, sy**2]])
-        sig_major, sig_minor, theta, evecs = self._ellipse_params_from_cov(
-            covmat
-        )
+        (sig_major, sig_minor,
+         theta, evecs) = self._ellipse_params_from_cov(covmat)
 
-        self.hprm = {
-            "mux": popt[0], "muy": popt[1],
-            "sigx": sx, "sigy": sy,
-            "cov": covmat,
-            "sig_major": sig_major, "sig_minor": sig_minor,
-            "theta": theta, "evecs": evecs,
-            "xcenters": xcenters, "ycenters": ycenters,
+        self.hprm_fit = {
+            "mux"       : popt[0],
+            "muy"       : popt[1],
+            "sigx"      : sx,
+            "sigy"      : sy,
+            "cov"       : covmat,
+            "sig_major" : sig_major,
+            "sig_minor" : sig_minor,
+            "theta"     : theta,
+            "evecs"     : evecs,
+            "xcenters"  : xcenters,
+            "ycenters"  : ycenters,
         }
-        return self.hprm
+        return self.hprm_fit
 
     def compute_threshold(self):
         """Run Kapur entropy thresholding on self.img.
@@ -398,24 +411,31 @@ class Histogram2DAnalyzer:
         """Print the moments / fit dictionary.
 
         Arguments:
-            hprm: optional dict to print; defaults to self.hprm.
+            hprm: optional dict to print; defaults to self.hprm_mom.
         """
-        h = hprm if hprm is not None else self.hprm
-        print(f"mu         = ({h['mux']:.4e}, {h['muy']:.4e})")
-        print(f"sigma x    = {h['sigx']:.4e}\nsigma y    = {h['sigy']:.4e}")
-        print(f"xy cov     = {h['cov'][0, 1]:.4e}\n")
+        if hprm is None:
+            print("No parameters provided; using the calculated from moments.")
+            if self.hprm_mom is None:
+                self.compute_moments()
+            hprm = self.hprm_mom
+        print(f"mu         = ({hprm['mux']:.4e}, {hprm['muy']:.4e})")
+        print(f"sigma x    = {hprm['sigx']:.4e}\nsigma y"
+              f"    = {hprm['sigy']:.4e}")
+        print(f"xy cov     = {hprm['cov'][0, 1]:.4e}\n")
         print(
             "principal sigmas:\n"
-            f"    sigma minor = {h['sig_minor']}\n"
-            f"    sigma major = {h['sig_major']}\n"
+            f"    sigma minor = {hprm['sig_minor']}\n"
+            f"    sigma major = {hprm['sig_major']}\n"
         )
-        thetadeg = np.degrees(h["theta"])
-        print(f"theta = {h['theta']:.4e} rad = {thetadeg:.4e} deg\n")
-        print(f"cov matrix:\n{h['cov']}")
+        thetadeg = np.degrees(hprm["theta"])
+        print(f"theta = {hprm['theta']:.4e} rad = {thetadeg:.4e} deg\n")
+        print(f"cov matrix:\n{hprm['cov']}")
 
     def plot(
         self,
         hprm=None,
+        fig=None,
+        ax=None,
         title=ELLIPSES_TITLE,
         ellipses=ELLIPSES,
         show_axes=True,
@@ -424,52 +444,59 @@ class Histogram2DAnalyzer:
         """Plot the histogram with sigma ellipses and principal directions.
 
         Arguments:
-            hprm: moments/fit dict; defaults to self.hprm.
-            title: axes title.
-            ellipses: iterable of (n_sigma, color) pairs.
-            show_axes: draw principal-axis lines when True.
-            center_label: legend label for the centroid marker.
+            hprm         : moments/fit dict; defaults to self.hprm_mom.
+            fig          : optional figure to plot on; created if None.
+            ax           : optional axis to plot on; created if None.
+            title        : axes title.
+            ellipses     : iterable of (n_sigma, color) pairs.
+            show_axes    : draw principal-axis lines when True.
+            center_label : legend label for the centroid marker.
 
         Returns:
             fig, ax
         """
-        h = hprm if hprm is not None else self.hprm
+        if hprm is None:
+            print("No parameters provided; using the calculated from moments.")
+            if self.hprm_mom is None:
+                self.compute_moments()
+            hprm = self.hprm_mom
 
-        fig, ax = plt.subplots(figsize=(10, 6))
+        if ax is None:
+            fig, ax = plt.subplots(figsize=(10, 6))
         self._render_histogram(fig, ax)
 
         ax.plot(
-            h["mux"], h["muy"],
+            hprm["mux"], hprm["muy"],
             marker="+", color="red", ms=10, mew=2, label=center_label,
         )
 
         for n, color in ellipses:
             ell = Ellipse(
-                (h["mux"], h["muy"]),
-                width=2 * n * h["sig_major"],
-                height=2 * n * h["sig_minor"],
-                angle=h["theta"] * 180 / np.pi,
+                (hprm["mux"], hprm["muy"]),
+                width=2 * n * hprm["sig_major"],
+                height=2 * n * hprm["sig_minor"],
+                angle=hprm["theta"] * 180 / np.pi,
                 fill=False, lw=2, color=color, label=f"{n}sigma",
             )
             ax.add_patch(ell)
 
         if show_axes:
-            v_major = h["evecs"][:, 0]
-            v_minor = h["evecs"][:, 1]
-            l_major = 3 * h["sig_major"]
-            l_minor = 3 * h["sig_minor"]
+            v_major = hprm["evecs"][:, 0]
+            v_minor = hprm["evecs"][:, 1]
+            l_major = 3 * hprm["sig_major"]
+            l_minor = 3 * hprm["sig_minor"]
             ax.plot(
-                [h["mux"] - l_major * v_major[0],
-                 h["mux"] + l_major * v_major[0]],
-                [h["muy"] - l_major * v_major[1],
-                 h["muy"] + l_major * v_major[1]],
+                [hprm["mux"] - l_major * v_major[0],
+                 hprm["mux"] + l_major * v_major[0]],
+                [hprm["muy"] - l_major * v_major[1],
+                 hprm["muy"] + l_major * v_major[1]],
                 color="white", ls="--", lw=1,
             )
             ax.plot(
-                [h["mux"] - l_minor * v_minor[0],
-                 h["mux"] + l_minor * v_minor[0]],
-                [h["muy"] - l_minor * v_minor[1],
-                 h["muy"] + l_minor * v_minor[1]],
+                [hprm["mux"] - l_minor * v_minor[0],
+                 hprm["mux"] + l_minor * v_minor[0]],
+                [hprm["muy"] - l_minor * v_minor[1],
+                 hprm["muy"] + l_minor * v_minor[1]],
                 color="white", ls=":", lw=1,
             )
 
