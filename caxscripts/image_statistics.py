@@ -87,7 +87,7 @@ class Histogram2DAnalyzer:
         self.yedges            = np.asarray(yedges, dtype=float)
         self.hprm_mom          = None
         self.hprm_fit          = None
-        self.optimal_threshold = None
+        self.optimal_threshold = np.max(img) * 0.1
         self.img_thresholded   = None
 
     @classmethod
@@ -257,22 +257,6 @@ class Histogram2DAnalyzer:
         h_f = -np.sum(p_f * np.log2(p_f + 1e-10))
         return h_b + h_f
 
-    def _render_histogram(self, fig, ax):
-        """Render self.img as a pcolormesh on ax.
-
-        Returns:
-            m: the pcolormesh artist.
-        """
-        m = ax.pcolormesh(
-            self.xedges, self.yedges, self.img.T,
-            shading="auto", cmap="viridis",
-        )
-        ax.set_aspect("equal", adjustable="box")
-        ax.set_xlim(self.xedges[0], self.xedges[-1])
-        ax.set_ylim(self.yedges[0], self.yedges[-1])
-        fig.colorbar(m, ax=ax, label="count")
-        return m
-
     # ------------------------------------------------------------------
     # Public pipeline methods.
     # ------------------------------------------------------------------
@@ -316,7 +300,7 @@ class Histogram2DAnalyzer:
         }
         return self.hprm_mom
 
-    def fit(self, hprm=None, img=None):
+    def fit(self, hprm=None, img=None, useroi=True):
         """Fit a 2D Gaussian to self.img via nonlinear least squares.
 
         Uses hprm (or self.hprm, or freshly computed moments) as the
@@ -326,6 +310,7 @@ class Histogram2DAnalyzer:
             hprm: optional pre-computed moments dict.
             img: optional array to fit instead of self.img
                 (e.g. self.img_thresholded).
+            useroi: if True, fit only within a 3-sigma ellipse ROI.
 
         Returns:
             hprm: fitted parameters dictionary; also stored in self.hprm.
@@ -347,6 +332,18 @@ class Histogram2DAnalyzer:
         dx = xcenters[1] - xcenters[0]
         dy = ycenters[1] - ycenters[0]
         img_norm = img / (img.sum() * dx * dy)
+
+        # Fit to ROI.
+        if useroi:
+            roi_mask = (
+                (xg >= hprm["mux"] - 3 * hprm["sigx"]) &
+                (xg <= hprm["mux"] + 3 * hprm["sigx"]) &
+                (yg >= hprm["muy"] - 3 * hprm["sigy"]) &
+                (yg <= hprm["muy"] + 3 * hprm["sigy"])
+            )
+            xg = xg[roi_mask]
+            yg = yg[roi_mask]
+            img_norm = img_norm[roi_mask]
 
         p0 = [
             hprm["mux"],
@@ -431,6 +428,23 @@ class Histogram2DAnalyzer:
         print(f"theta = {hprm['theta']:.4e} rad = {thetadeg:.4e} deg\n")
         print(f"cov matrix:\n{hprm['cov']}")
 
+    def _render_histogram(self, fig, ax, colorbar=True):
+        """Render self.img as a pcolormesh on ax.
+
+        Returns:
+            m: the pcolormesh artist.
+        """
+        m = ax.pcolormesh(
+            self.xedges, self.yedges, self.img.T,
+            shading="auto", cmap="viridis",
+        )
+        ax.set_aspect("equal", adjustable="box")
+        ax.set_xlim(self.xedges[0], self.xedges[-1])
+        ax.set_ylim(self.yedges[0], self.yedges[-1])
+        if colorbar:
+            fig.colorbar(m, ax=ax, label="count")
+        return m
+
     def plot(
         self,
         hprm=None,
@@ -438,8 +452,9 @@ class Histogram2DAnalyzer:
         ax=None,
         title=ELLIPSES_TITLE,
         ellipses=ELLIPSES,
-        show_axes=True,
+        show_ellipse_axes=True,
         center_label="centroid",
+        colorbar=True,
     ):
         """Plot the histogram with sigma ellipses and principal directions.
 
@@ -449,8 +464,9 @@ class Histogram2DAnalyzer:
             ax           : optional axis to plot on; created if None.
             title        : axes title.
             ellipses     : iterable of (n_sigma, color) pairs.
-            show_axes    : draw principal-axis lines when True.
+            show_ellipse_axes : draw principal-axis lines when True.
             center_label : legend label for the centroid marker.
+            colorbar     : whether to show a colorbar for the histogram.
 
         Returns:
             fig, ax
@@ -463,11 +479,13 @@ class Histogram2DAnalyzer:
 
         if ax is None:
             fig, ax = plt.subplots(figsize=(10, 6))
-        self._render_histogram(fig, ax)
+        self._render_histogram(fig, ax, colorbar=colorbar)
 
         ax.plot(
             hprm["mux"], hprm["muy"],
-            marker="+", color="red", ms=10, mew=2, label=center_label,
+            marker="+", color="red",
+            label=center_label,
+            # ms=10, mew=2,
         )
 
         for n, color in ellipses:
@@ -480,7 +498,7 @@ class Histogram2DAnalyzer:
             )
             ax.add_patch(ell)
 
-        if show_axes:
+        if show_ellipse_axes:
             v_major = hprm["evecs"][:, 0]
             v_minor = hprm["evecs"][:, 1]
             l_major = 3 * hprm["sig_major"]
