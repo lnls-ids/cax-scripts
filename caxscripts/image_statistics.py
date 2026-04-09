@@ -202,10 +202,12 @@ class Histogram2DAnalyzer:
         """Evaluate a normalized 2D Gaussian at coords = (x, y).
 
         Arguments:
-            coords     : tuple (x, y) of coordinate arrays.
-            mux, muy   : means in x and y, respectively.
-            sigx, sigy : standard deviations in x and y, respectively.
-            covxy      : covariance between x and y.
+            coords : tuple (x, y) of coordinate arrays.
+            mux    : mean in x.
+            muy    : mean in y.
+            sigx   : standard deviation in x.
+            sigy   : standard deviation in y.
+            covxy  : covariance between x and y.
 
         Returns:
             Gaussian values at the given coordinates.
@@ -231,10 +233,8 @@ class Histogram2DAnalyzer:
         least 2.
         """
         n = self.img.size
-        fd_nbins = min(
-            len(np.histogram_bin_edges(self.img.ravel(), bins="fd")) - 1,
-            1024,
-        )
+        edgehist = np.histogram_bin_edges(self.img.ravel(), bins="fd")
+        fd_nbins = min(len(edgehist) - 1, 1024)
         sturges_nbins = int(1.0 + np.log2(n))
         return max(fd_nbins, sturges_nbins, 2)
 

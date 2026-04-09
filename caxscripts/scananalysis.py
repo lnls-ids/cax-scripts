@@ -9,31 +9,51 @@ The main focus is on analyzing the beam profiles obtained from
 scans and understanding how they change with respect to the
 scanned variable (e.g., variations in Tx).
 Main functions:
-- beam_properties: Extract centroids and FWHMs of the beam profiles.
-- beam_centroid: Extract only the centroids of the beam profiles.
-- beam_fwhm: Extract only the FWHMs of the beam profiles.
-- beam_intensity: Extract the total intensity of the beam profiles.
-- observable_data: Extract the behavior of a variable across scans
-    in a dataset.
+
+- beam_centroid: Return centroids of the beam profiles from the data dict.
+
+- beam_fwhm: Return fwhm of the beam profiles from the data dict.
+
+- beam_intensity: Return the total intensity of the beam profiles from
+    the data dict.
+
+- beam_properties: Return properties of the beam profiles from the data dict.
+
+- caustic_analysis: Perform caustic analysis on the given dataset.
+
+- centroid_plot: Plot the beam profile images and their centroids in a dataset.
+
+- correlate: Calculate the normalized cross-correlation between
+    two 1D arrays.
+
+- data_from_h5_files: Read multiple HDF5 files into a nested dict.
+
 - dataset_plot: Plot the behavior of an observable across scans for
     a single dataset.
-- plot_double_observable: Plot two-component observables in
-    separate subplots.
-- scan_plot: Plot the behavior of an observable across scans
-    for each dataset.
-- centroid_plot: Plot the beam profile images and their centroids
+
+- files_in_directory: List files in a directory matching a regex pattern.
+
+- fwhm_plot: Plot the beam profile images and their FWHMs in a dataset.
+
+- get_scan_data: Extract observable and variable values across scans.
+
+- h5_to_dict: Read an HDF5 file into a nested dict.
+
+- observable_data: Extract the behavior of a variable across scans
     in a dataset.
-- fwhm_plot: Plot the beam profile images and their FWHMs
+
+- observable_statistics: Calculate statistics of an observable across scans
     in a dataset.
-- observable_statistics: Calculate statistics of an observable
-    across scans in a dataset.
+
+- plot_double_observable: Plot two-component observables in separate subplots.
+
+- scan_plot: Plot the behavior of an observable across scans for each dataset.
 """
 import h5py
 import numpy as np
 import os
 import re
 
-from matplotlib import colors
 from matplotlib.animation import FuncAnimation
 import matplotlib.pyplot as plt
 
@@ -48,130 +68,9 @@ from . import utils
 # Threshold for peak-to-average ratio acceptance of image.
 THRESHOLD = 100
 
-
-def h5_to_dict(filename):
-    """Read an HDF5 file into a nested dict.
-
-    Structure:
-        data[group_name]['attrs']        -> group attributes (metadata)
-        data[group_name][dataset_name]   -> dict with 'data' (numpy array)
-                                           and 'attrs' (dataset attributes)
-    """
-    def _read_group(grp):
-        out = {'attrs': dict(grp.attrs)}
-        for name, item in grp.items():
-            if isinstance(item, h5py.Dataset):
-                out[name] = {'data': item[()], 'attrs': dict(item.attrs)}
-            elif isinstance(item, h5py.Group):
-                out[name] = _read_group(item)
-        return out
-
-    with h5py.File(filename, 'r') as f:
-        return {key: _read_group(f[key]) for key in f}
-
-
-def data_from_h5_files(files):
-    """Read multiple HDF5 files into a nested dict."""
-    data = {}
-    for filename in files:
-        key = re.sub('pass', '',
-                     os.path.basename(filename).split('_')[2].split('-')[0])
-        data[key] = h5_to_dict(filename)
-    return data
-
-
-def files_in_directory(wdir, pattern):
-    """List files in a directory matching a regex pattern."""
-    rawfiles = os.listdir(wdir)
-    return sorted([f"{wdir}/{f}" for f in rawfiles if re.match(pattern, f)])
-
-
-def beam_visible(img, cx, cy, droi=4, threshold=THRESHOLD):
-    """Detect if a beam is present based on the peak-to-average ratio.
-
-    Args:
-        img (np.array): The 2D image array to analyze.
-        cx (int): The x-coordinate of the beam centroid.
-        cy (int): The y-coordinate of the beam centroid.
-        droi (int): The half-size of the region around the centroid used
-            to calculate the peak intensity. Default is 4 pixels.
-        threshold (float): The minimum peak-to-average ratio required to
-            consider the beam visible. Default is 10.
-
-    Returns:
-        bool: True if the beam is considered visible, False otherwise.
-    """
-    roi_avg = np.mean(img[cy-droi:cy+droi, cx-droi:cx+droi])
-    mean = np.mean(img)
-    ratio_rtom = roi_avg / mean if mean != 0 else 0
-
-    return ratio_rtom >= threshold
-
-
-def beam_properties(dataset, dev_motor, droi=4, threshold=THRESHOLD):
-    """Return properties of the beam profiles from the data dict.
-
-    Args:
-        dataset (dict): Nested dict containing the set of one full scan.
-        dev_motor (str): The device and motor being scanned (e.g., 'sample.x').
-        droi (int): The half-size of the region around the centroid used to
-            determine if the beam is visible. Default is 4 pixels.
-        threshold (float): The minimum peak-to-average ratio required to
-            consider the beam visible. Default is 10.
-
-    Returns:
-        beam_propties : A dict mapping scan numbers to (cx, cy), (fx, fy)
-            centroids and FWHMs.
-        beam_images   : A dict mapping scan numbers to DVF images of the beam,
-            only scans where the beam is visible are returned.
-    """
-    beam_propties = {}
-    beam_images   = {}
-    xval          = []
-    for scan, scandata in dataset.items():
-        # Extract scanning index and observable value.
-        sc = int(scan.split('-')[-1])
-        xval = float(scandata['attrs'].get(dev_motor)[0])
-
-        # Get image data and calculate centroid.
-        img = scandata['dvf_B1']['data']
-
-        # Centroids.
-        # cx = np.sum(img, axis=0).argmax()
-        # cy = np.sum(img, axis=1).argmax()
-        cx_sum = np.sum(img, axis=0)
-        cy_sum = np.sum(img, axis=1)
-
-        xsmooth = savgol_filter(cx_sum, window_length=21, polyorder=2)
-        ysmooth = savgol_filter(cy_sum, window_length=21, polyorder=2)
-
-        cx = np.argmax(xsmooth)
-        cy = np.argmax(ysmooth)
-
-        # DEBUG
-        # xmaxraw = np.argmax(cx_sum)
-        # ymaxraw = np.argmax(cy_sum)
-        # print(f">>>>> Scan {sc}: Centroid raw at (cx={xmaxraw},"
-        #       f" cy={ymaxraw}), ")
-        # print(f">>>>> Scan {sc}: Centroid at (cx={cx}, cy={cy}), ")
-        # # DEBUG
-
-        # FWHMs
-        x_profile = img[cy, :]
-        y_profile = img[:, cx]
-
-        fwhm_x = np.sum(x_profile > (x_profile.max() / 2))
-        fwhm_y = np.sum(y_profile > (y_profile.max() / 2))
-
-        # Do not register properties if there is no beam image.
-        if not beam_visible(img, cx, cy, droi, threshold):
-            continue
-
-        # Dict is indexed by scan number.
-        beam_propties[sc] = [xval, [cx, cy], [fwhm_x, fwhm_y]]
-        beam_images[sc]   = img
- 
-    return beam_images, beam_propties
+#
+# Beam properties extraction methods and analysis.
+#
 
 
 def beam_centroid(dataset, dev_motor, droi=4, threshold=THRESHOLD):
@@ -179,7 +78,8 @@ def beam_centroid(dataset, dev_motor, droi=4, threshold=THRESHOLD):
 
     Args:
         dataset (dict): Nested dict containing the set of one full scan.
-        dev_motor (str): The device and motor being scanned (e.g., 'sample.x').
+        dev_motor (str): The device and motor being scanned
+            (e.g., 'mirror.rx').
         droi (int): The half-size of the region around the centroid used to
             determine if the beam is visible. Default is 4 pixels.
         threshold (float): The minimum peak-to-average ratio required to
@@ -188,18 +88,24 @@ def beam_centroid(dataset, dev_motor, droi=4, threshold=THRESHOLD):
     Returns:
         dict: A dict mapping scan numbers to (cx, cy) centroids.
     """
-    centroids = {}
-    xval      = []
+    # FWHM to sigma conversion factor.
+    f2sig = 2 * np.sqrt(2 * np.log(2))
 
+    # Calculate beam properties for all scans.
     _, beam_propties = beam_properties(dataset, dev_motor, droi, threshold)
 
-    for sc in beam_propties.keys():
-        xval   = beam_propties[sc][0]
-        cx, cy = beam_propties[sc][1]
+    scans, xvals, centrs, sigmas  = [], [], [], []
+    for sc, values in beam_propties.items():
+        scans.append(sc)
+        xvals.append(values[0])
+        centrs.append(values[1])
 
-        centroids[sc] = [xval, [cx, cy]]
- 
-    return centroids
+        # Estimate sigma from FWHM for a Gaussian profile.
+        fwhms = values[2]
+        sigmas.append(fwhms / f2sig)
+
+    return (np.array(scans), np.array(xvals),
+            np.array(centrs), np.array(sigmas))
 
 
 def beam_fwhm(dataset, dev_motor, droi=4, threshold=THRESHOLD):
@@ -276,6 +182,166 @@ def beam_intensity(dataset, dev_motor, droi=4, threshold=THRESHOLD):
     return intensities
 
 
+def beam_properties(dataset, dev_motor, droi=4, threshold=THRESHOLD):
+    """Return properties of the beam profiles from the data dict.
+
+    Args:
+        dataset (dict): Nested dict containing the set of one full scan.
+        dev_motor (str): The device and motor being scanned (e.g., 'sample.x').
+        droi (int): The half-size of the region around the centroid used to
+            determine if the beam is visible. Default is 4 pixels.
+        threshold (float): The minimum peak-to-average ratio required to
+            consider the beam visible. Default is 10.
+
+    Returns:
+        beam_propties : A dict mapping scan numbers to (cx, cy), (fx, fy)
+            centroids and FWHMs.
+        beam_images   : A dict mapping scan numbers to DVF images of the beam,
+            only scans where the beam is visible are returned.
+    """
+    beam_propties = {}
+    beam_images   = {}
+    xval          = []
+
+    for scan, scandata in dataset.items():
+        # Extract scanning index and observable value.
+        sc = int(scan.split('-')[-1])
+        xval = float(scandata['attrs'].get(dev_motor)[0])
+
+        # Get image data and calculate centroid.
+        img = scandata['dvf_B1']['data']
+
+        # Centroids.
+        # cx = np.sum(img, axis=0).argmax()
+        # cy = np.sum(img, axis=1).argmax()
+        cx_sum = np.sum(img, axis=0)
+        cy_sum = np.sum(img, axis=1)
+
+        xsmooth = savgol_filter(cx_sum, window_length=21, polyorder=2)
+        ysmooth = savgol_filter(cy_sum, window_length=21, polyorder=2)
+
+        cx = np.argmax(xsmooth)
+        cy = np.argmax(ysmooth)
+
+        # FWHMs
+        x_profile = img[cy, :]
+        y_profile = img[:, cx]
+
+        fwhm_x = np.sum(x_profile > (x_profile.max() / 2))
+        fwhm_y = np.sum(y_profile > (y_profile.max() / 2))
+
+        # Do not register properties if there is no beam image.
+        if not beam_visible(img, cx, cy, droi, threshold):
+            continue
+
+        # Dict is indexed by scan number.
+        beam_propties[sc] = [xval, [cx, cy], [fwhm_x, fwhm_y]]
+        beam_images[sc]   = img
+
+    return beam_images, beam_propties
+
+
+def beam_visible(img, cx, cy, droi=4, threshold=THRESHOLD):
+    """Detect if a beam is present based on the peak-to-average ratio.
+
+    Args:
+        img (np.array): The 2D image array to analyze.
+        cx (int): The x-coordinate of the beam centroid.
+        cy (int): The y-coordinate of the beam centroid.
+        droi (int): The half-size of the region around the centroid used
+            to calculate the peak intensity. Default is 4 pixels.
+        threshold (float): The minimum peak-to-average ratio required to
+            consider the beam visible. Default is 10.
+
+    Returns:
+        bool: True if the beam is considered visible, False otherwise.
+    """
+    roi_avg = np.mean(img[cy-droi:cy+droi, cx-droi:cx+droi])
+    mean = np.mean(img)
+    ratio_rtom = roi_avg / mean if mean != 0 else 0
+
+    return ratio_rtom >= threshold
+
+
+#
+# Methods for reading HDF5 files and exporting to dictionary structure.
+#
+
+def data_from_h5_files(files):
+    """Read multiple HDF5 files into a nested dict."""
+    data = {}
+    for filename in files:
+        key = re.sub('pass', '',
+                     os.path.basename(filename).split('_')[2].split('-')[0])
+        data[key] = h5_to_dict(filename)
+    return data
+
+
+def files_in_directory(wdir, pattern):
+    """List files in a directory matching a regex pattern."""
+    rawfiles = os.listdir(wdir)
+    return sorted([f"{wdir}/{f}" for f in rawfiles if re.match(pattern, f)])
+
+
+def h5_to_dict(filename):
+    """Read an HDF5 file into a nested dict.
+
+    Structure:
+        data[group_name]['attrs']        -> group attributes (metadata)
+        data[group_name][dataset_name]   -> dict with 'data' (numpy array)
+                                           and 'attrs' (dataset attributes)
+    """
+    def _read_group(grp):
+        out = {'attrs': dict(grp.attrs)}
+        for name, item in grp.items():
+            if isinstance(item, h5py.Dataset):
+                out[name] = {'data': item[()], 'attrs': dict(item.attrs)}
+            elif isinstance(item, h5py.Group):
+                out[name] = _read_group(item)
+        return out
+
+    with h5py.File(filename, 'r') as f:
+        return {key: _read_group(f[key]) for key in f}
+
+
+#
+# Functions to extract device (motor) and observable values across scans.
+#
+
+def _get_dev_val(dataset, nscan, dev):
+    """Helper function to extract a device value from the dataset."""
+    val = dataset[nscan]['attrs'].get(dev)
+    if isinstance(val, (np.ndarray, list)):
+        val = val[0]
+    return val
+
+
+def get_scan_data(data, variable, observable):
+    """Extract observable and variable values across scans."""
+    ndset = list(data.keys())
+    datascans = []
+    for ns in ndset:
+        scanlist = list(data[ns].keys())
+
+        obs_set = []
+        var_set = []
+
+        for nscan in scanlist:
+            obsval = _get_dev_val(data[ns], nscan, observable)
+            obs_set.append(obsval)
+            varval = _get_dev_val(data[ns], nscan, variable)
+            var_set.append(varval)
+
+        datascans.append((obs_set, var_set))
+
+    return datascans
+
+
+#
+# Variable behavior and statistical analysis.
+#
+
+
 def observable_data(data, observable):
     """Extract the behavior of a variable across scans in a dataset.
 
@@ -287,11 +353,11 @@ def observable_data(data, observable):
 
     Returns:
         tuple: (motor, scans, xval, yval) where:
-            motor (str)      : The name of the scanned variable.
-            scans (np.array) : Array of scan numbers.
-            xval (np.array)  : Array of scanned variable values.
-            yval (list of np.array): List of arrays containing the observable
-                values for each scan.
+        motor (str)      : The name of the scanned variable.
+        scans (np.array) : Array of scan numbers.
+        xval (np.array)  : Array of scanned variable values.
+        yval (list of np.array): List of arrays containing the observable
+            values for each scan.
     """
     # The scanned variable (idx).
     motor     = data['scan-0000']['attrs']['scan_motor']
@@ -300,19 +366,15 @@ def observable_data(data, observable):
 
     # Centroids are calculated in beam_centroid().
     if observable == 'centroid':
-        centroids = beam_centroid(data, dev_motor)
+        scans, xvals, centrs, sigmas = beam_centroid(data, dev_motor)
 
-        # Dict is ordered by scan number.
-        scans = np.array(list(centroids.keys()))
+        # Centroid values, reshaped to [all x, all y].
+        centroids = [centrs[:, 0], centrs[:, 1]]
 
-        # Observable values.
-        xvals = np.array([centroids[sc][0] for sc in scans])
+        # Sigmas, reshaped to [all sx, all sy].
+        sigmas  = [sigmas[:, 0], sigmas[:, 1]]
 
-        # Cetroid values.
-        values = np.array([centroids[sc][1] for sc in scans])
-        centr  = [values[:, 0], values[:, 1]]
-
-        return motor, scans, xvals, centr
+        return motor, scans, xvals, centroids, sigmas
 
     # FWHMs are calculated in beam_fwhm().
     if observable == 'fwhm':
@@ -324,11 +386,11 @@ def observable_data(data, observable):
         # Observable values.
         xvals = np.array([fwhms[sc][0] for sc in scans])
 
-        # Cetroid values.
-        values = np.array([fwhms[sc][1] for sc in scans])
-        fs     = [values[:, 0], values[:, 1]]
+        # FWHM values.
+        cvalues = np.array([fwhms[sc][1] for sc in scans])
+        fwhms   = [cvalues[:, 0], cvalues[:, 1]]
 
-        return motor, scans, xvals, fs
+        return motor, scans, xvals, fwhms, None
 
     # Intensities are calculated in beam_intensity().
     if observable == 'intensity':
@@ -340,11 +402,14 @@ def observable_data(data, observable):
         # Observable values.
         xvals = np.array([intensities[sc][0] for sc in scans])
 
-        # Cetroid values.
-        values      = np.array([intensities[sc][1] for sc in scans])
-        intensities = [values[:, 0], values[:, 1], values[:, 2]]
+        # Intensity values.
+        cvalues      = np.array([intensities[sc][1] for sc in scans])
+        intensities = [cvalues[:, 0], cvalues[:, 1], cvalues[:, 2]]
 
-        return motor, scans, xvals, intensities
+        # Sigmas
+        sigmas = [np.sqrt(intens) for intens in intensities]
+
+        return motor, scans, xvals, intensities, sigmas
 
     scans, xval, yval = [], [], []
     # Run over each point scanned.
@@ -353,13 +418,6 @@ def observable_data(data, observable):
         scans.append(int(scan.split('-')[-1]))
         xmeta = scandata['attrs'].get(dev_motor)
         ymeta = scandata['attrs'].get(f"{device}.{observable}")
-
-        # DEBUG
-        # print(f">>> OBSERVABLE DATA - "
-        #       f"Scan {scan} / : {device}.{observable}, "
-        #       f" xmeta={xmeta} ({type(xmeta)}),"
-        #       f" ymeta={ymeta} ({type(ymeta)}) <<<<")
-        # DEBUG
 
         # Append the values, handling both scalar and array metadata cases.
         if isinstance(xmeta, list) or isinstance(xmeta, np.ndarray):
@@ -374,97 +432,58 @@ def observable_data(data, observable):
     return motor, np.array(scans), np.array(xval), [np.array(yval)]
 
 
-def dataset_plot(ax, xvals, yvals, datakey, observable, motor,
-                 first_item=0, last_item=None, annotate_points=True):
-    """Plot the behavior of an observable across scans for a single dataset."""
-    # Plot the observable vs. scan number for the given dataset.
-    # for yval in yvals:
-
-    if annotate_points:
-        for i, (tx, yv) in enumerate(zip(xvals[first_item:last_item],
-                                         yvals[first_item:last_item])):
-            ax.annotate(str(i), (tx, yv), textcoords='offset points',
-                         xytext=(5, 5), fontsize=8)
-    if last_item is None:
-        ax.plot(xvals[first_item:], yvals[first_item:],
-                marker='o', label=f'Dataset {datakey}')
-    else:
-        ax.plot(xvals[first_item:last_item],
-                yvals[first_item:last_item],
-                marker='o', label=f'Dataset {datakey}')
-
-    ax.set_xlabel(motor)
-    ax.set_ylabel(observable)
-    ax.set_title(f'{observable.capitalize()} vs. {motor.capitalize()}')
-    ax.legend()
-    ax.grid(True)
-
-
-def plot_double_observable(axs, nrow, data, observable, observables,
-                           first_item=0, last_item=None):
-    """Plot two-component observables in separate subplots."""
-    for datakey, dataset in data.items():
-        motor, scans, xvals, yvals = observable_data(dataset, observable)
-        dataset_plot(axs[nrow, 0], xvals, yvals[0], datakey,
-                     f"{observable} X", motor, first_item, last_item)
-        dataset_plot(axs[nrow, 1], xvals, yvals[1], datakey,
-                     f'{observable} Y', motor, first_item, last_item)
-    observables.remove(observable)
-    return
-
-
-def scan_plot(data, observables, first_item=0, last_item=None):
-    """Plot the behavior of an observable across scans for each dataset.
+def observable_statistics(data, observable):
+    """Calculate statistics of an observable across scans in a dataset.
 
     Args:
         data (dict): Nested dict containing the set of all passes.
-        observables (list of str): The variables to plot
-            (e.g., 'photocollector', 'centroid').
-        first_item (int): The first point of the scan to be included in
-            the plot. It allows skipping initial points if desired.
-            Default is 0 (include all points).
-        last_item (int or None): The last point of the scan to be included
-            in the plot. If None, include all points.
+        observable (str): The variable to analyze (e.g., 'photocollector',
+            'centroid').
+        droi (int): The half-size of the region around the centroid used to
+            determine if the beam is visible. Default is 4 pixels.
+        threshold (float): The minimum peak-to-average ratio required to
+            consider the beam visible. Default is 10.
+
+    Returns:
+        dict: A dict mapping dataset keys to statistics of the observable,
+            including mean, median, and standard deviation.
     """
-    # Determine the number of rows and columns for subplots based on
-    # the number of observables.
-    nobs = len(observables)
-    # Add an extra plot for the centroid components.
-    nobs += sum([1 for obs in ['centroid', 'fwhm', 'intensity']
-                 if obs in observables])
+    yscans = []
+    for dataset in data.values():
+        motor, scans, xval, yvals = observable_data(dataset, observable)
+        yscans.append(yvals)
 
-    nrows = max((nobs + 1) // 2, 1)
-    ncols = 2 if nobs > 1 else 1
-    fig, axs = plt.subplots(nrows=nrows, ncols=ncols,
-                            figsize=(10 * ncols, 6 * nrows))
-    # Make it iterable
-    if nrows == 1 and ncols == 1:
-        axs = [axs]
-    # elif nrows == 1 or ncols == 1:
-    #     axs = axs.flatten()
+    # Calculate statistics for each dataset.
+    yscans = np.array(yscans)
+    yavg   = np.mean(yscans, axis=0)
+    ymed   = np.median(yscans, axis=0)
+    ystd   = np.std(yscans, axis=0)
 
-    # Some observables demand two subplots.
-    nextrow = 0
-    for observable in ['centroid', 'fwhm', 'intensity']:
-        if observable in observables:
-            plot_double_observable(axs, nextrow, data,
-                                   observable, observables,
-                                   first_item, last_item)
-            nextrow += 1
+    stats = {
+        'xval'    : xval,
+        'mean'    : yavg,
+        'median'  : ymed,
+        'std_dev' : ystd
+    }
 
-    # Loop over each observable and dataset to plot the
-    # observable vs. scan number.
-    for idx, observable in enumerate(observables):
-        nr, nc = divmod(idx + nextrow * ncols, 2)
-        ax = axs[nr, nc] if nrows > 1 and ncols > 1 else axs[idx + nextrow]
-        for datakey, dataset in data.items():
-            motor, scans, xvals, yvals = observable_data(dataset, observable)
-            for yval in yvals:
-                dataset_plot(ax, xvals, yval, datakey, observable, motor,
-                            first_item, last_item)
+    return stats
 
-    plt.show()
 
+#
+# Correlation analysis functions.
+#
+
+def correlate(a, b):
+    """Calculate the normalized cross-correlation between two 1D arrays."""
+    a = a - np.mean(a)
+    b = b - np.mean(b)
+    norm = np.std(a) * np.std(b) * len(a)
+    return np.correlate(a, b, mode='full') / norm
+
+
+#
+# Plotting functions.
+#
 
 def centroid_plot(dataset, scanpass, wdir='.', save_fmt='gif'):
     """Plot the beam profile images and their centroids in a dataset.
@@ -547,6 +566,117 @@ def centroid_plot(dataset, scanpass, wdir='.', save_fmt='gif'):
 
     plt.close()
     ipydisplay(HTML(anim.to_jshtml()))
+
+
+def centroid_x_delta_plot(data, motor, scan_start=0, scan_end=12):
+    """Plot motor change and centroid X change across scan passes.
+
+    Args:
+        data (dict): Nested dict containing all scan passes.
+        motor (str): Motor observable to plot, e.g. 'mirror.cs_rz'
+            or 'mirror.ry'.
+        scan_start (int): Scan index for the initial centroid measurement.
+        scan_end (int): Scan index for the final centroid measurement.
+    """
+    fig, axs = plt.subplots(2, 1, figsize=(10, 10))
+    rax0 = axs[0].twinx()
+    rax1 = axs[1].twinx()
+    plt.subplots_adjust(hspace=0.3)
+
+    baseline_motor = []
+    final_motor    = []
+    scan_idx       = []
+    baseline_cx    = []
+    final_cx       = []
+
+    for dataset in data.values():
+        baseline_motor.append(
+            dataset[f'scan-{scan_start:04d}']['attrs'][motor][0]
+            )
+        final_motor.append(
+            dataset[f'scan-{scan_end:04d}']['attrs'][motor][0]
+            )
+        scan_idx.append(len(scan_idx))
+
+        cx = beam_centroid(dataset, 'mirror.tx')
+        baseline_cx.append(cx[scan_start][1][0])
+        final_cx.append(cx[scan_end][1][0])
+
+    init_motor = baseline_motor[0]
+    init_cx    = baseline_cx[0]
+
+    baseline_motor = np.array(baseline_motor) - init_motor
+    final_motor    = np.array(final_motor) - init_motor
+    baseline_cx    = np.array(baseline_cx) - init_cx
+    final_cx       = np.array(final_cx) - init_cx
+
+    motor_delta = final_motor - baseline_motor
+    cx_delta    = final_cx - baseline_cx
+
+    motor_cumulative = np.cumsum(motor_delta)
+    cx_cumulative    = np.cumsum(cx_delta)
+
+    motor_label = motor.replace('.', ' ').upper()
+    title = f'{motor_label} Change vs. Scan Index'
+    left_label = f'{motor_label} Change'
+
+    line0,  = axs[0].plot(scan_idx, motor_delta, marker='o', color='blue',
+                          label=motor_label)
+    line0b, = rax0.plot(scan_idx, cx_delta, marker='o', color='green',
+                       label='Centroid X Change (px)')
+
+    lines, labels = axs[0].get_legend_handles_labels()
+    lines2, labels2 = rax0.get_legend_handles_labels()
+    axs[0].legend(lines + lines2, labels + labels2, loc='best')
+
+    axs[0].grid(True)
+    axs[0].set_xlabel('Scan Index')
+    axs[0].set_ylabel(left_label)
+    rax0.set_ylabel('Centroid X Change (px)')
+    axs[0].set_title(title)
+
+    axs[1].plot(scan_idx, motor_cumulative, marker='o', color='blue',
+                label=f'Cumulative {motor_label} Change')
+    rax1.plot(scan_idx, cx_cumulative, marker='o', color='green',
+              label='Cumulative Centroid X Change')
+
+    lines, labels = axs[1].get_legend_handles_labels()
+    lines2, labels2 = rax1.get_legend_handles_labels()
+    axs[1].legend(lines + lines2, labels + labels2, loc='best')
+
+    axs[1].grid(True)
+    axs[1].set_xlabel('Scan Index')
+    axs[1].set_ylabel(f'Cumulative {motor_label} Change')
+    rax1.set_ylabel('Cumulative Centroid X Change (px)')
+    axs[1].set_title(f'Cumulative {motor_label} Change vs. Scan Index')
+
+    plt.show()
+
+
+def dataset_plot(ax, xvals, yvals, datakey, observable, motor,
+                 first_item=0, last_item=None, annotate_points=True):
+    """Plot the behavior of an observable across scans for a single dataset."""
+    # Plot the observable vs. scan number for the given dataset.
+    # for yval in yvals:
+
+    if annotate_points:
+        for i, (tx, yv) in enumerate(zip(xvals[first_item:last_item],
+                                         yvals[first_item:last_item])):
+            ax.annotate(str(i), (tx, yv), textcoords='offset points',
+                         xytext=(5, 5), fontsize=8)
+    if last_item is None:
+        ax.plot(xvals[first_item:], yvals[first_item:],
+                marker='o', label=f'Dataset {datakey}')
+    else:
+        ax.plot(xvals[first_item:last_item],
+                yvals[first_item:last_item],
+                marker='o', label=f'Dataset {datakey}')
+
+    ax.set_xlabel(motor)
+    ax.set_ylabel(observable)
+    ax.set_title(f'{observable.capitalize()} vs. {motor.capitalize()}')
+    ax.legend()
+    ax.grid(True)
 
 
 def fwhm_plot(dataset, scanpass, wdir='.', save_fmt='gif'):
@@ -632,48 +762,77 @@ def fwhm_plot(dataset, scanpass, wdir='.', save_fmt='gif'):
     ipydisplay(HTML(anim.to_jshtml()))
 
 
-def observable_statistics(data, observable):
-    """Calculate statistics of an observable across scans in a dataset.
+def plot_double_observable(axs, nrow, data, observable, observables,
+                           first_item=0, last_item=None):
+    """Plot two-component observables in separate subplots."""
+    for datakey, dataset in data.items():
+        motor, scans, xvals, yvals = observable_data(dataset, observable)
+        dataset_plot(axs[nrow, 0], xvals, yvals[0], datakey,
+                     f"{observable} X", motor, first_item, last_item)
+        dataset_plot(axs[nrow, 1], xvals, yvals[1], datakey,
+                     f'{observable} Y', motor, first_item, last_item)
+    observables.remove(observable)
+    return
+
+
+def scan_plot(data, observables, first_item=0, last_item=None):
+    """Plot the behavior of an observable across scans for each dataset.
 
     Args:
         data (dict): Nested dict containing the set of all passes.
-        observable (str): The variable to analyze (e.g., 'photocollector',
-            'centroid').
-        droi (int): The half-size of the region around the centroid used to
-            determine if the beam is visible. Default is 4 pixels.
-        threshold (float): The minimum peak-to-average ratio required to
-            consider the beam visible. Default is 10.
-
-    Returns:
-        dict: A dict mapping dataset keys to statistics of the observable,
-            including mean, median, and standard deviation.
+        observables (list of str): The variables to plot
+            (e.g., 'photocollector', 'centroid').
+        first_item (int): The first point of the scan to be included in
+            the plot. It allows skipping initial points if desired.
+            Default is 0 (include all points).
+        last_item (int or None): The last point of the scan to be included
+            in the plot. If None, include all points.
     """
-    yscans = []
-    for datakey, dataset in data.items():
-        motor, scans, xval, yvals = observable_data(dataset, observable)
-        yscans.append(yvals)
+    # Determine the number of rows and columns for subplots based on
+    # the number of observables.
+    nobs = len(observables)
+    # Add an extra plot for the centroid components.
+    nobs += sum([1 for obs in ['centroid', 'fwhm', 'intensity']
+                 if obs in observables])
 
-    # Calculate statistics for each dataset.
-    yscans = np.array(yscans)
-    yavg   = np.mean(yscans, axis=0)
-    ymed   = np.median(yscans, axis=0)
-    ystd   = np.std(yscans, axis=0)
+    nrows = max((nobs + 1) // 2, 1)
+    ncols = 2 if nobs > 1 else 1
+    fig, axs = plt.subplots(nrows=nrows, ncols=ncols,
+                            figsize=(10 * ncols, 6 * nrows))
+    # Make it iterable
+    if nrows == 1 and ncols == 1:
+        axs = [axs]
+    # elif nrows == 1 or ncols == 1:
+    #     axs = axs.flatten()
 
-    stats = {
-        'xval'    : xval,
-        'mean'    : yavg,
-        'median'  : ymed,
-        'std_dev' : ystd
-    }
+    # Some observables demand two subplots.
+    nextrow = 0
+    for observable in ['centroid', 'fwhm', 'intensity']:
+        if observable in observables:
+            plot_double_observable(axs, nextrow, data,
+                                   observable, observables,
+                                   first_item, last_item)
+            nextrow += 1
 
-    return stats
+    # Loop over each observable and dataset to plot the
+    # observable vs. scan number.
+    for idx, observable in enumerate(observables):
+        nr, nc = divmod(idx + nextrow * ncols, 2)
+        ax = axs[nr, nc] if nrows > 1 and ncols > 1 else axs[idx + nextrow]
+        for datakey, dataset in data.items():
+            motor, scans, xvals, yvals = observable_data(dataset, observable)
+            for yval in yvals:
+                dataset_plot(ax, xvals, yval, datakey, observable, motor,
+                            first_item, last_item)
+
+    plt.show()
 
 
 # Old code for caustic analysis. To be checked.
 
 def caustic_analysis(filename, filedir):
     """Perform caustic analysis on the given scan data."""
-    file = '/'.join([filedir,filename])
+    file = '/'.join([filedir, filename])
 
     f = h5py.File(name=file, mode='r')
 
@@ -688,10 +847,10 @@ def caustic_analysis(filename, filedir):
     causticy = np.sum(caustic3d, axis=2).T
 
     fwhmsx = [
-        utils.full_width(data=profilex,coords=positions)[0]
+        utils.full_width(data=profilex, coords=positions)[0]
         for profilex in causticx.T]
     fwhmsy = [
-        utils.full_width(data=profiley,coords=positions)[0]
+        utils.full_width(data=profiley, coords=positions)[0]
         for profiley in causticy.T]
 
     causticx_params, covx = curve_fit(utils.caustic_func,
