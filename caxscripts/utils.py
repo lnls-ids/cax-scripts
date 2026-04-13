@@ -5,6 +5,7 @@ import json
 import numpy as np
 from siriuspy.devices import CAXCtrl, DVF
 import matplotlib.pyplot as plt
+import epics
 
 # # parameters ##
 
@@ -124,6 +125,11 @@ def get_image(dvf: DVF):
             else:
                 raise Exception("Client exception") from err
 
+def snapshot_storage_ring():
+    """Get current storage ring status as a dictionary."""
+    return {
+        'current': epics.caget('SI-13C4:DI-DCCT:Current-Mon')
+    }
 
 def snapshot_dvf(dvf, *, include_imgproc=False):
     """Capture a DVF snapshot: image, camera settings, and beam diagnostics.
@@ -276,7 +282,9 @@ def snapshot_machine_state(cax: CAXCtrl):
                       dvfB1.lens_hilm,
                       dvfB1.lens_enbl],  # Bypass to get enable status of lens_pos
         }
-    dvf_B1_status.update(snapshot_dvf(dvfB1, include_imgproc=False))
+    dvf_B1_status.update(snapshot_dvf(dvfB1, include_imgproc=True))
+
+    sirius_status = snapshot_storage_ring()
 
     return {
         'mirror'  : mirror_status,
@@ -284,6 +292,7 @@ def snapshot_machine_state(cax: CAXCtrl):
         'slit_B1' : slitB1_status,
         'dvf_A1'  : dvfA1_status,
         'dvf_B1'  : dvf_B1_status,
+        'sirius'  : sirius_status,
     }
 
 

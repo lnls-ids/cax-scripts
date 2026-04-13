@@ -62,12 +62,42 @@ from IPython.display import display as ipydisplay
 
 from scipy.signal import savgol_filter
 from scipy.optimize import curve_fit
-
 from . import utils
 
 # Threshold for peak-to-average ratio acceptance of image.
 THRESHOLD = 100
 
+#
+# Scan parameter extraction methods.
+#
+
+def _get_scan_xmeta(scandata, dev_motor):
+    """Helper function to extract the scanned variable metadata from the dataset.
+    
+    Args:
+        scandata (dict): Dict containing data for a single step of a scan.
+        dev_motor (str): The device and motor being scanned (e.g., 'mirror.rx').
+    
+    Returns:
+        list: Metadata of the scanned variable: [value, lolm, hilm, enable].
+    """
+    # Separate device and motor from the input string.
+    device, motor = dev_motor.split('.')
+
+    try:
+        # First try to get data directly from the scan attributes.
+        if scandata['attrs'].get(dev_motor) is not None:
+            xmeta = scandata['attrs'].get(dev_motor)
+        # In the case of DVFs, the scanned variable is stored in 
+        # the device group attributes.
+        elif scandata.get(device, None) is not None:
+            xmeta = scandata[device]['attrs'].get(motor)
+    except (KeyError, TypeError, ValueError):
+        xmeta = None
+        raise ValueError(f"Could not extract scanned variable metadata"  
+                         f"for {dev_motor}")
+    return xmeta
+        
 #
 # Beam properties extraction methods and analysis.
 #
@@ -206,7 +236,9 @@ def beam_properties(dataset, dev_motor, droi=4, threshold=THRESHOLD):
     for scan, scandata in dataset.items():
         # Extract scanning index and observable value.
         sc = int(scan.split('-')[-1])
-        xval = float(scandata['attrs'].get(dev_motor)[0])
+
+        # Extract the scanned variable value for this scan step.
+        xval = float(_get_scan_xmeta(scandata, dev_motor)[0])
 
         # Get image data and calculate centroid.
         img = scandata['dvf_B1']['data']
@@ -361,7 +393,7 @@ def observable_data(data, observable):
     """
     # The scanned variable (idx).
     motor     = data['scan-0000']['attrs']['scan_motor']
-    device    = data['scan-0000']['attrs']['scan_type']
+    device    = data['scan-0000']['attrs']['scan_device']
     dev_motor = f"{device}.{motor}"
 
     # Centroids are calculated in beam_centroid().
@@ -416,7 +448,7 @@ def observable_data(data, observable):
     for scan, scandata in data.items():
         # Get scan number, scanning index and observable value.
         scans.append(int(scan.split('-')[-1]))
-        xmeta = scandata['attrs'].get(dev_motor)
+        xmeta = _get_scan_xmeta(scandata, dev_motor)
         ymeta = scandata['attrs'].get(f"{device}.{observable}")
 
         # Append the values, handling both scalar and array metadata cases.

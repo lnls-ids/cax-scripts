@@ -78,12 +78,12 @@ class CAXMirrorMove:
     def _step_update_and_save(self, h5file, step_index, motor, step_type):
         """Update the step dict with current machine state and save to HDF5 file."""
         step = {
-            'step': step_index,
-            'scan_name': 'mirror',
-            'scan_type': 'mirror',
-            'scan_motor': motor,
-            'state': step_type,
-            'time': datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            'step'       : step_index,
+            'scan_name'  : 'mirror',
+            'scan_device'  : 'mirror',
+            'scan_motor' : motor,
+            'state'      : step_type,
+            'time'       : datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         }
         step.update(utils.snapshot_machine_state(self.cax))
         self.results.append(step)
@@ -111,7 +111,7 @@ class CAXMirrorMove:
 
         # Record initial machine state before any movement.
         step0 = self._step_update_and_save(h5file, 0, motor,
-                                          step_type='scanning')  
+                                          step_type='initial')  
 
         for idx, pos in enumerate(positions):
             print(f"\n Step: {idx+1}/{len(positions)} -"
@@ -280,13 +280,14 @@ class CAXSlitMove:
         """Update the step dict with current machine state and save to HDF5 file."""
         (i, j, winsize) = window
         step = {
-            'time': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            'scan_type': slit,
-            'step': step_index,
-            'step_row': i,
-            'step_col': j,
+            'time'        : datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            'scan_name'   : "slit",
+            'scan_device' : slit,
+            'step'        : step_index,
+            'step_row'    : i,
+            'step_col'    : j,
             'window_size' : winsize,
-            'state': step_type,
+            'state'       : step_type,
         }
         step.update(utils.snapshot_machine_state(self.cax))
         self.results.append(step)
@@ -384,12 +385,12 @@ class CAXCausticMove():
     def _step_update_and_save(self, h5file, step_index, step_type):
         """Update the step dict with current machine state and save to HDF5 file."""
         step = {
-            'step': step_index,
-            'scan_name': 'caustic',
-            'scan_type': 'dvf_B1',
-            'scab_motor': 'z',
-            'state': step_type,
-            'time': datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            'step'        : step_index,
+            'scan_name'   : 'caustic',
+            'scan_device' : 'dvf_B1',
+            'scan_motor'  : 'z_pos',
+            'state'       : step_type,
+            'time'        : datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             }
         step.update(utils.snapshot_machine_state(self.cax))
         utils.save_step(h5file, step)
@@ -471,12 +472,12 @@ class CAXLensMove(_PVAccessor):
     def _step_update_and_save(self, h5file, step_index, step_type):
         """Update the step dict with current machine state and save to HDF5 file."""
         step = {
-            'step': step_index,
-            'scan_name': 'lens',
-            'scan_type': 'dvf_B1',
-            'scan_motor': 'lens',
-            'state': step_type,
-            'time': datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            'step'        : step_index,
+            'scan_name'   : 'lens',
+            'scan_device' : 'dvf_B1',
+            'scan_motor'  : 'lens_pos',
+            'state'       : step_type,
+            'time'        : datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             }
         step.update(utils.snapshot_machine_state(self.cax))        
         utils.save_step(h5file, step)
