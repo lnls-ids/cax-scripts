@@ -7,31 +7,7 @@ from siriuspy.devices import CAXCtrl, DVF
 import matplotlib.pyplot as plt
 import epics
 
-# # parameters ##
-
-# dvf
-SCALE = 1     # [um/px]
-MAXERRORCOUNT = 3
-
-# ry
-STEP = 0.0001  # [mm]
-DELAY = 2      # [s]
-
-# slit1 limits
-TOPMAX = 19.8
-BOTTOMAX = 35.8
-LEFTMAX = 44.56
-RIGHTMAX = 45.9
-#
-TOPMIN = 15
-BOTTOMIN = 31
-LEFTMIN = 43.55
-RIGHTMIN = 44.88
-#
-TOPMID = (TOPMIN + TOPMAX)/2
-BOTTOMID = (BOTTOMIN + BOTTOMAX)/2
-LEFTMID = (LEFTMIN + LEFTMAX)/2
-RIGHTMID = (RIGHTMIN + RIGHTMAX)/2
+from config import Config as Cfg
 
 
 # ## analysis functions ##
@@ -42,7 +18,7 @@ def fwhm_quick(data):
     data = np.asarray(data)
     threshold = 0.5*np.max(data)
     mask = data > threshold
-    return np.sum(mask) * SCALE
+    return np.sum(mask) * Cfg.SCALE
 
 
 def peak(data):
@@ -52,7 +28,7 @@ def peak(data):
 
 def position(data):
     """Calculate position of the peak."""
-    return np.argmax(data) * SCALE
+    return np.argmax(data) * Cfg.SCALE
 
 
 def full_width(data, coords=None, hfactor=0.5):
@@ -74,7 +50,7 @@ def full_width(data, coords=None, hfactor=0.5):
 
     # linear interpolation to find the x-values at height
     zeros = (yr*xl-yl*xr)/(yr-yl)
-    width = zeros[-1]-zeros[0]
+    width = (zeros[-1]-zeros[0]) * Cfg.SCALE
 
     return width, zeros
 
@@ -87,7 +63,7 @@ def caustic_func(z, z0, amp, s0):
     amp: amplitude [m]
     s0: spread factor [m]
     """
-    return amp * np.sqrt(1 + ((z-z0)/s0)**2)
+    return amp * np.sqrt(1 + ((z - z0) / s0)**2)
 
 
 def caustic_processing(params, positions):
@@ -105,13 +81,10 @@ def caustic_processing(params, positions):
 # # beamline functions ##
 
 
-# CAX = CAXCtrl()
-
-
 def get_image(dvf: DVF):
     """Get image from DVF with retries on failure."""
     count = 0
-    while count < MAXERRORCOUNT:
+    while count < Cfg.MAXERRORCOUNT:
         try:
             if not dvf.acquisition_status:
                 dvf.cmd_acquire_on()
@@ -120,16 +93,19 @@ def get_image(dvf: DVF):
             print(f" WARNING. When trying to fetch image from DVF1: {err} ")
             time.sleep(2)
             count += 1
-            if count < MAXERRORCOUNT:
+            if count < Cfg.MAXERRORCOUNT:
                 print("\n Repeating the procedure...\n")
             else:
                 raise Exception("Client exception") from err
 
-def snapshot_storage_ring():
-    """Get current storage ring status as a dictionary."""
-    return {
-        'current': epics.caget('SI-13C4:DI-DCCT:Current-Mon')
-    }
+
+def _get_pvs_status(pv_dict: dict, suffix=''):
+    """Get status of the PVs defined in the given dictionary."""
+    pv_status = {}
+    for id_name, id_pv in pv_dict.items():
+        pv_status[id_name + suffix] = epics.caget(id_pv)
+    return pv_status
+
 
 def snapshot_dvf(dvf, *, include_imgproc=False):
     """Capture a DVF snapshot: image, camera settings, and beam diagnostics.
@@ -219,81 +195,85 @@ def snapshot_machine_state(cax: CAXCtrl):
             'photocollector': caxm.photocurrent_signal
         }
 
-    caxsA1 = cax.slit_A1
-    slitA1_status = {
-            'top'           : [caxsA1.top_mon,
-                               caxsA1.top_lolm,
-                               caxsA1.top_hilm,
-                               caxsA1.top_enbl],
-            'bottom'        : [caxsA1.bottom_mon,
-                               caxsA1.bottom_lolm,
-                               caxsA1.bottom_hilm,
-                               caxsA1.bottom_enbl],
-            'left'          : [caxsA1.left_mon,
-                               caxsA1.left_lolm,
-                               caxsA1.left_hilm,
-                               caxsA1.left_enbl],
-            'right'         : [caxsA1.right_mon,
-                               caxsA1.right_lolm,
-                               caxsA1.right_hilm,
-                               caxsA1.right_enbl]
+    caxs_a1 = cax.slit_A1
+    slit_a1_status = {
+            'top'           : [caxs_a1.top_mon,
+                               caxs_a1.top_lolm,
+                               caxs_a1.top_hilm,
+                               caxs_a1.top_enbl],
+            'bottom'        : [caxs_a1.bottom_mon,
+                               caxs_a1.bottom_lolm,
+                               caxs_a1.bottom_hilm,
+                               caxs_a1.bottom_enbl],
+            'left'          : [caxs_a1.left_mon,
+                               caxs_a1.left_lolm,
+                               caxs_a1.left_hilm,
+                               caxs_a1.left_enbl],
+            'right'         : [caxs_a1.right_mon,
+                               caxs_a1.right_lolm,
+                               caxs_a1.right_hilm,
+                               caxs_a1.right_enbl]
         }
 
-    caxsB1 = cax.slit_B1
-    slitB1_status = {
-            'top'           : [caxsB1.top_mon,
-                               caxsB1.top_lolm,
-                               caxsB1.top_hilm,
-                               caxsB1.top_enbl],
-            'bottom'        : [caxsB1.bottom_mon,
-                               caxsB1.bottom_lolm,
-                               caxsB1.bottom_hilm,
-                               caxsB1.bottom_enbl],
-            'left'          : [caxsB1.left_mon,
-                               caxsB1.left_lolm,
-                               caxsB1.left_hilm,
-                               caxsB1.left_enbl],
-            'right'         : [caxsB1.right_mon,
-                               caxsB1.right_lolm,
-                               caxsB1.right_hilm,
-                               caxsB1.right_enbl]
+    caxs_b1 = cax.slit_B1
+    slit_b1_status = {
+            'top'           : [caxs_b1.top_mon,
+                               caxs_b1.top_lolm,
+                               caxs_b1.top_hilm,
+                               caxs_b1.top_enbl],
+            'bottom'        : [caxs_b1.bottom_mon,
+                               caxs_b1.bottom_lolm,
+                               caxs_b1.bottom_hilm,
+                               caxs_b1.bottom_enbl],
+            'left'          : [caxs_b1.left_mon,
+                               caxs_b1.left_lolm,
+                               caxs_b1.left_hilm,
+                               caxs_b1.left_enbl],
+            'right'         : [caxs_b1.right_mon,
+                               caxs_b1.right_lolm,
+                               caxs_b1.right_hilm,
+                               caxs_b1.right_enbl]
         }
 
     # DVF1 status accounts for caustic scans.
-    dvfA1_status = snapshot_dvf(cax.dvf_A1, include_imgproc=False)
+    dvf_a1_status = snapshot_dvf(cax.dvf_A1, include_imgproc=False)
 
     # caustic_status = {
     #     'z_pos' : [dvf2.z_pos,
     #                dvf2.z_min,
     #                dvf2.z_max,
-    #                dvf2["PP01:E.CNEN"]]  # Bypass to get enable status of z_pos
+    #                dvf2["PP01:E.CNEN"]]  # Bypass: get ENBL status of z_pos
     #     }
     # caustic_status.update(snapshot_dvf(dvf2, include_imgproc=False))
 
     # DVF2 status accounts for lens and caustic scans.
-    dvfB1  = cax.dvf_B1
-    dvf_B1_status = {
-        'z_pos'    : [dvfB1.z_mon,
-                      dvfB1.z_lolm,
-                      dvfB1.z_hilm,
-                      dvfB1.z_enbl],  # Bypass to get enable status of z_pos
-        'lens_pos' : [dvfB1.lens_mon,
-                      dvfB1.lens_lolm,
-                      dvfB1.lens_hilm,
-                      dvfB1.lens_enbl],  # Bypass to get enable status of lens_pos
+    dvf_b1  = cax.dvf_B1
+    dvf_b1_status = {
+        'z_pos'    : [dvf_b1.z_mon,
+                      dvf_b1.z_lolm,
+                      dvf_b1.z_hilm,
+                      dvf_b1.z_enbl],     # Bypass: get ENBL status of z_pos
+        'lens_pos' : [dvf_b1.lens_mon,
+                      dvf_b1.lens_lolm,
+                      dvf_b1.lens_hilm,
+                      dvf_b1.lens_enbl],  # Bypass: get ENBL status of lens_pos
         }
-    dvf_B1_status.update(snapshot_dvf(dvfB1, include_imgproc=True))
+    dvf_b1_status.update(snapshot_dvf(dvf_b1, include_imgproc=True))
 
-    sirius_status = snapshot_storage_ring()
-
-    return {
-        'mirror'  : mirror_status,
-        'slit_A1' : slitA1_status,
-        'slit_B1' : slitB1_status,
-        'dvf_A1'  : dvfA1_status,
-        'dvf_B1'  : dvf_B1_status,
-        'sirius'  : sirius_status,
+    all_status = {
+        'mirror'     : mirror_status,
+        'slit_A1'    : slit_a1_status,
+        'slit_B1'    : slit_b1_status,
+        'dvf_A1'     : dvf_a1_status,
+        'dvf_B1'     : dvf_b1_status,
     }
+
+    # Get SR current, ID's gaps/phases, and Carcara environment PVs.
+    all_status.update(_get_pvs_status(Cfg.SRPV))
+    all_status.update(_get_pvs_status(Cfg.IDPVS))
+    all_status.update(_get_pvs_status(Cfg.CAX_ENV_PVS))
+
+    return all_status
 
 
 def save_beamline_config(filename, filedir):
@@ -332,18 +312,19 @@ def data_save(h5file, scaname, setmetadata, dvfimg, devname='dvf'):
 # --- DVF sub-keys that hold images (saved as datasets, not attributes) ---
 _DVF_IMAGE_KEY = 'image'
 
-# Keys inside a step dict whose values are DVF snapshot dicts (contain images).
-_DVF_KEYS = ('dvf_A1', 'dvf_B1')
 
-
-def _flatten_dict(d, prefix=''):
+def _flatten_dict(dct, prefix=''):
     """Flatten a (possibly nested) dict using '.' as separator.
 
     Entries whose values are numpy arrays are skipped (images are saved
     separately as HDF5 datasets).
+
+    Args:
+        dct: dict to flatten.
+        prefix: used internally for recursion to build the full key name.
     """
     flat = {}
-    for key, val in d.items():
+    for key, val in dct.items():
         full_key = f'{prefix}{key}' if not prefix else f'{prefix}.{key}'
         if isinstance(val, dict):
             flat.update(_flatten_dict(val, prefix=full_key))
@@ -387,13 +368,13 @@ def save_step(h5file, step, step_index=None):
     grpname = f'scan-{idx:04d}'
 
     # --- Separate DVF dicts (contain images) from everything else ---
-    non_dvf = {k: v for k, v in step.items() if k not in _DVF_KEYS}
+    non_dvf = {k: v for k, v in step.items() if k not in Cfg.DVF_KEYS}
     grp_attrs = _flatten_dict(non_dvf)
 
     h5file.save_group(grpname=grpname, grpmetadata=grp_attrs)
 
     # --- Save each DVF as a dataset inside the group ---
-    for dvf_key in _DVF_KEYS:
+    for dvf_key in Cfg.DVF_KEYS:
         dvf_dict = step.get(dvf_key)
         if dvf_dict is None:
             continue
@@ -410,17 +391,6 @@ def save_step(h5file, step, step_index=None):
         )
 
 
-# Slit limits defined from DVF images with slits fully open.
-# This avoids long motor moves and discrepancies between
-# hard limits and those defined in the front end.
-SLIT_A1_TOP_LIMS = {
-    'TOP'    : 19.5,
-    'BOTTOM' : 37.5,
-    'LEFT'   : 47.5,
-    'RIGHT'  : 46.5,
-}
-
-
 def slit_open(device_mv, cax_status):
     """Open the slits."""
     devname = device_mv.devname
@@ -430,20 +400,17 @@ def slit_open(device_mv, cax_status):
         ]
 
     device        = device_mv.device
-    device.top    = SLIT_A1_TOP_LIMS['TOP']
-    device.bottom = SLIT_A1_TOP_LIMS['BOTTOM']
-    device.left   = SLIT_A1_TOP_LIMS['LEFT']
-    device.right  = SLIT_A1_TOP_LIMS['RIGHT']
+    device.top    = Cfg.SLIT_A1_TOP_LIMS['TOP']
+    device.bottom = Cfg.SLIT_A1_TOP_LIMS['BOTTOM']
+    device.left   = Cfg.SLIT_A1_TOP_LIMS['LEFT']
+    device.right  = Cfg.SLIT_A1_TOP_LIMS['RIGHT']
 
     return slit_status
 
 
-IMG_THRESHOLD = 100
-
-
 def image_show_slit_boundary(img):
     """Determine slit boundaries from the image and display them."""
-    roi = img > IMG_THRESHOLD
+    roi = img > Cfg.IMG_THRESHOLD
     hor, vert = img.shape
 
     left = min(vert - 1, np.argmax(roi.sum(axis=0) > 0))
@@ -453,7 +420,7 @@ def image_show_slit_boundary(img):
     bottom = max(0, hor - 1 - np.argmax(roi[::-1, :].sum(axis=1) > 0))
 
     fig, ax = plt.subplots()
-    pix_to_um = 0.48
+    pix_to_um = Cfg.SCALE
     print("\n ** Current slit boundaries at DVF (in microns):\n"
           f"      top: {top    * pix_to_um:.2f},\n"
           f"   bottom: {bottom * pix_to_um:.2f},\n"
