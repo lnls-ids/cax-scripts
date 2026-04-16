@@ -26,13 +26,13 @@ def peak(data):
     return np.max(data)
 
 
-def position(data):
+def peak_position(data):
     """Calculate position of the peak."""
     return np.argmax(data) * Cfg.SCALE
 
 
 def full_width(data, coords=None, hfactor=0.5):
-    """Calculate full width at given height factor."""
+    """Calculate width at given height factor."""
     data = np.asarray(data)
     if coords is None:
         coords = np.arange(data.size)

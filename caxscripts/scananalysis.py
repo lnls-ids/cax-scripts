@@ -71,13 +71,15 @@ THRESHOLD = 100
 # Scan parameter extraction methods.
 #
 
-def _get_scan_xmeta(scandata, dev_motor):
-    """Helper function to extract the scanned variable metadata from the dataset.
-    
+
+def _get_variable_metadata(data, dev_motor):
+    """Helper function to extract the variable metadata from the dataset.
+
     Args:
-        scandata (dict): Dict containing data for a single step of a scan.
-        dev_motor (str): The device and motor being scanned (e.g., 'mirror.rx').
-    
+        data (dict): Dict containing data for a single step of a scan.
+        dev_motor (str): The device and motor being scanned
+            (e.g., 'mirror.rx').
+
     Returns:
         list: Metadata of the scanned variable: [value, lolm, hilm, enable].
     """
@@ -86,18 +88,18 @@ def _get_scan_xmeta(scandata, dev_motor):
 
     try:
         # First try to get data directly from the scan attributes.
-        if scandata['attrs'].get(dev_motor) is not None:
-            xmeta = scandata['attrs'].get(dev_motor)
-        # In the case of DVFs, the scanned variable is stored in 
+        if data['attrs'].get(dev_motor) is not None:
+            meta = data['attrs'].get(dev_motor)
+        # In the case of DVFs, the scanned variable is stored in
         # the device group attributes.
-        elif scandata.get(device, None) is not None:
-            xmeta = scandata[device]['attrs'].get(motor)
-    except (KeyError, TypeError, ValueError):
-        xmeta = None
-        raise ValueError(f"Could not extract scanned variable metadata"  
-                         f"for {dev_motor}")
-    return xmeta
-        
+        elif data.get(device, None) is not None:
+            meta = data[device]['attrs'].get(motor)
+    except (KeyError, TypeError, ValueError) as err:
+        meta = None
+        raise ValueError(f"Could not extract scanned variable metadata"
+                         f"for {dev_motor}") from err
+    return meta
+
 #
 # Beam properties extraction methods and analysis.
 #
@@ -233,15 +235,15 @@ def beam_properties(dataset, dev_motor, droi=4, threshold=THRESHOLD):
     beam_images   = {}
     xval          = []
 
-    for scan, scandata in dataset.items():
+    for scan, data in dataset.items():
         # Extract scanning index and observable value.
         sc = int(scan.split('-')[-1])
 
         # Extract the scanned variable value for this scan step.
-        xval = float(_get_scan_xmeta(scandata, dev_motor)[0])
+        xval = float(_get_variable_metadata(data, dev_motor)[0])
 
         # Get image data and calculate centroid.
-        img = scandata['dvf_B1']['data']
+        img = data['dvf_B1']['data']
 
         # Centroids.
         # cx = np.sum(img, axis=0).argmax()
@@ -448,7 +450,7 @@ def observable_data(data, observable):
     for scan, scandata in data.items():
         # Get scan number, scanning index and observable value.
         scans.append(int(scan.split('-')[-1]))
-        xmeta = _get_scan_xmeta(scandata, dev_motor)
+        xmeta = _get_variable_metadata(scandata, dev_motor)
         ymeta = scandata['attrs'].get(f"{device}.{observable}")
 
         # Append the values, handling both scalar and array metadata cases.
@@ -497,7 +499,6 @@ def observable_statistics(data, observable):
         'median'  : ymed,
         'std_dev' : ystd
     }
-
     return stats
 
 
