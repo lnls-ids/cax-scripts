@@ -79,15 +79,15 @@ class Histogram2DAnalyzer:
     # Construction.
     # ------------------------------------------------------------------
 
-    def __init__(self, img, xedges, yedges, data, droi=4):
+    def __init__(self, img, xedges, yedges, droi=4):
         """Initialise with a 2D histogram and its bin edges.
 
         Arguments:
             img: 2D histogram array.
             xedges: 1D array of x bin edges (length img.shape[0] + 1).
             yedges: 1D array of y bin edges (length img.shape[1] + 1).
-            data: original data array used to generate the histogram.
             droi: half-size of the region of interest for beam visibility.
+        # data: original data array used to generate the histogram.
         """
         self.img               = np.asarray(img,    dtype=float)
         self.xedges            = np.asarray(xedges, dtype=float)
@@ -96,7 +96,7 @@ class Histogram2DAnalyzer:
         self.hprm_fit          = None
         self.optimal_threshold = np.max(img) * 0.1
         self.img_thresholded   = None
-        self.data              = np.asarray(data, dtype=float)
+        self.data              = None  # np.asarray(data, dtype=float)
         self.droi              = droi
 
     def fwhm_quick(self, data):
