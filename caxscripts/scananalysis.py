@@ -105,11 +105,11 @@ def _get_variable_metadata(data, dev_motor):
 #
 
 
-def beam_centroid(dataset, dev_motor, droi=4, threshold=THRESHOLD):
+def beam_centroid(datascan, dev_motor, droi=4, threshold=THRESHOLD):
     """Return centroids of the beam profiles from the data dict.
 
     Args:
-        dataset (dict): Nested dict containing the set of one full scan.
+        datascan (dict): Nested dict containing the set of one full scan.
         dev_motor (str): The device and motor being scanned
             (e.g., 'mirror.rx').
         droi (int): The half-size of the region around the centroid used to
@@ -124,7 +124,7 @@ def beam_centroid(dataset, dev_motor, droi=4, threshold=THRESHOLD):
     f2sig = 2 * np.sqrt(2 * np.log(2))
 
     # Calculate beam properties for all scans.
-    _, beam_propties = beam_properties(dataset, dev_motor, droi, threshold)
+    _, beam_propties = beam_properties(datascan, dev_motor, droi, threshold)
 
     scans, xvals, centrs, sigmas  = [], [], [], []
     for sc, values in beam_propties.items():
@@ -140,11 +140,11 @@ def beam_centroid(dataset, dev_motor, droi=4, threshold=THRESHOLD):
             np.array(centrs), np.array(sigmas))
 
 
-def beam_fwhm(dataset, dev_motor, droi=4, threshold=THRESHOLD):
+def beam_fwhm(datascan, dev_motor, droi=4, threshold=THRESHOLD):
     """Return fwhm of the beam profiles from the data dict.
 
     Args:
-        dataset (dict): Nested dict containing the set of one full scan
+        datascan (dict): Nested dict containing the set of one full scan
             (one pass).
         dev_motor (str): The device and motor being scanned (e.g., 'sample.x').
         droi (int): The half-size of the region around the centroid used to
@@ -156,7 +156,7 @@ def beam_fwhm(dataset, dev_motor, droi=4, threshold=THRESHOLD):
         dict: A dict mapping scan numbers to (fx, fy) fwhm's.
     """
     fwhms = {}
-    _, beam_propties = beam_properties(dataset, dev_motor, droi, threshold)
+    _, beam_propties = beam_properties(datascan, dev_motor, droi, threshold)
 
     for sc in beam_propties.keys():
         xval   = beam_propties[sc][0]
@@ -167,11 +167,11 @@ def beam_fwhm(dataset, dev_motor, droi=4, threshold=THRESHOLD):
     return fwhms
 
 
-def beam_intensity(dataset, dev_motor, droi=4, threshold=THRESHOLD):
+def beam_intensity(datascan, dev_motor, droi=4, threshold=THRESHOLD):
     """Return the total intensity of the beam profiles from the data dict.
 
     Args:
-        dataset (dict): Nested dict containing the set of one full scan
+        datascan (dict): Nested dict containing the set of one full scan
             (one pass).
         dev_motor (str): The device and motor being scanned (e.g., 'sample.x').
         droi (int): The half-size of the region around the centroid used to
@@ -182,9 +182,9 @@ def beam_intensity(dataset, dev_motor, droi=4, threshold=THRESHOLD):
     Returns:
         dict: A dict mapping scan numbers to total intensity.
     """
-    beam_images, beam_propties = beam_properties(dataset, dev_motor,
+    beam_images, beam_propties = beam_properties(datascan, dev_motor,
                                                  droi, threshold)
-    exptime = dataset['scan-0000']['dvf_B1']['attrs']['expo_time']
+    exptime = datascan['scan-0000']['dvf_B1']['attrs']['expo_time']
 
     intensities = {}
     droi = 2
@@ -214,11 +214,11 @@ def beam_intensity(dataset, dev_motor, droi=4, threshold=THRESHOLD):
     return intensities
 
 
-def beam_properties(dataset, dev_motor, droi=4, threshold=THRESHOLD):
+def beam_properties(datascan, dev_motor, droi=4, threshold=THRESHOLD):
     """Return properties of the beam profiles from the data dict.
 
     Args:
-        dataset (dict): Nested dict containing the set of one full scan.
+        datascan (dict): Nested dict containing the set of one full scan.
         dev_motor (str): The device and motor being scanned (e.g., 'sample.x').
         droi (int): The half-size of the region around the centroid used to
             determine if the beam is visible. Default is 4 pixels.
@@ -235,7 +235,7 @@ def beam_properties(dataset, dev_motor, droi=4, threshold=THRESHOLD):
     beam_images   = {}
     xval          = []
 
-    for scan, data in dataset.items():
+    for scan, data in datascan.items():
         # Extract scanning index and observable value.
         sc = int(scan.split('-')[-1])
 
@@ -395,7 +395,7 @@ def observable_data(data, observable):
     """
     # The scanned variable (idx).
     motor     = data['scan-0000']['attrs']['scan_motor']
-    device    = data['scan-0000']['attrs']['scan_device']
+    device    = data['scan-0000']['attrs']['scan_type']
     dev_motor = f"{device}.{motor}"
 
     # Centroids are calculated in beam_centroid().
@@ -463,7 +463,7 @@ def observable_data(data, observable):
         else:
             yval.append(float(ymeta))
 
-    return motor, np.array(scans), np.array(xval), [np.array(yval)]
+    return motor, np.array(scans), np.array(xval), [np.array(yval)], None
 
 
 def observable_statistics(data, observable):
@@ -484,7 +484,8 @@ def observable_statistics(data, observable):
     """
     yscans = []
     for dataset in data.values():
-        motor, scans, xval, yvals = observable_data(dataset, observable)
+        (motor, scans,
+         xvals, yvals, sigmas) = observable_data(dataset, observable)
         yscans.append(yvals)
 
     # Calculate statistics for each dataset.
@@ -494,7 +495,7 @@ def observable_statistics(data, observable):
     ystd   = np.std(yscans, axis=0)
 
     stats = {
-        'xval'    : xval,
+        'xval'    : xvals,
         'mean'    : yavg,
         'median'  : ymed,
         'std_dev' : ystd
@@ -518,11 +519,11 @@ def correlate(a, b):
 # Plotting functions.
 #
 
-def centroid_plot(dataset, scanpass, wdir='.', save_fmt='gif'):
+def centroid_plot(data, scanpass, wdir='.', save_fmt='gif'):
     """Plot the beam profile images and their centroids in a dataset.
 
     Args:
-        dataset (dict): Nested dict containing the set of one full scan
+        data (dict): Nested dict containing the set of one full scan
             (one pass).
         scanpass (str): Identifier for the scan pass
             (used in titles and filenames).
@@ -533,12 +534,12 @@ def centroid_plot(dataset, scanpass, wdir='.', save_fmt='gif'):
     """
     # Use the existing function to get motor, positions and centroids.
     (motor, scan_nums, xval,
-     (cx_all, cy_all)) = observable_data(dataset, 'centroid')
+     (cx_all, cy_all)) = observable_data(data, 'centroid')
 
     # Retrieve images in the same order as scan_nums.
     images = [(f'scan-{sc:04d}',
-            dataset[f'scan-{sc:04d}']['dvf_B1']['data'])
-            for sc in scan_nums]
+               data[f'scan-{sc:04d}']['dvf_B1']['data'])
+               for sc in scan_nums]
 
     fig, (ax_img, ax_cx, ax_cy) = plt.subplots(1, 3, figsize=(24, 5))
 
@@ -601,11 +602,11 @@ def centroid_plot(dataset, scanpass, wdir='.', save_fmt='gif'):
     ipydisplay(HTML(anim.to_jshtml()))
 
 
-def centroid_x_delta_plot(data, motor, scan_start=0, scan_end=12):
+def centroid_x_delta_plot(dataset, motor, scan_start=0, scan_end=-1):
     """Plot motor change and centroid X change across scan passes.
 
     Args:
-        data (dict): Nested dict containing all scan passes.
+        dataset (dict): Nested dict containing all scan passes.
         motor (str): Motor observable to plot, e.g. 'mirror.cs_rz'
             or 'mirror.ry'.
         scan_start (int): Scan index for the initial centroid measurement.
@@ -622,18 +623,20 @@ def centroid_x_delta_plot(data, motor, scan_start=0, scan_end=12):
     baseline_cx    = []
     final_cx       = []
 
-    for dataset in data.values():
+    # Get beam info for all scans in dataset.
+
+    for data in dataset.values():
         baseline_motor.append(
-            dataset[f'scan-{scan_start:04d}']['attrs'][motor][0]
+            data[f'scan-{scan_start:04d}']['attrs'][motor][0]
             )
         final_motor.append(
-            dataset[f'scan-{scan_end:04d}']['attrs'][motor][0]
+            data[f'scan-{scan_end:04d}']['attrs'][motor][0]
             )
         scan_idx.append(len(scan_idx))
 
-        cx = beam_centroid(dataset, 'mirror.tx')
-        baseline_cx.append(cx[scan_start][1][0])
-        final_cx.append(cx[scan_end][1][0])
+        scans, xvals, centroid, sigmas = beam_centroid(data, motor)
+        baseline_cx.append(centroid[scan_start][0])
+        final_cx.append(centroid[scan_end][0])
 
     init_motor = baseline_motor[0]
     init_cx    = baseline_cx[0]
@@ -795,14 +798,15 @@ def fwhm_plot(dataset, scanpass, wdir='.', save_fmt='gif'):
     ipydisplay(HTML(anim.to_jshtml()))
 
 
-def plot_double_observable(axs, nrow, data, observable, observables,
+def plot_double_observable(axs, nrow, dataset, observable, observables,
                            first_item=0, last_item=None):
     """Plot two-component observables in separate subplots."""
-    for datakey, dataset in data.items():
-        motor, scans, xvals, yvals = observable_data(dataset, observable)
-        dataset_plot(axs[nrow, 0], xvals, yvals[0], datakey,
+    for key, data in dataset.items():
+        (motor, scans,
+         xvals, yvals, sigmas) = observable_data(data, observable)
+        dataset_plot(axs[nrow, 0], xvals, yvals[0], key,
                      f"{observable} X", motor, first_item, last_item)
-        dataset_plot(axs[nrow, 1], xvals, yvals[1], datakey,
+        dataset_plot(axs[nrow, 1], xvals, yvals[1], key,
                      f'{observable} Y', motor, first_item, last_item)
     observables.remove(observable)
     return
@@ -852,10 +856,11 @@ def scan_plot(data, observables, first_item=0, last_item=None):
     for idx, observable in enumerate(observables):
         nr, nc = divmod(idx + nextrow * ncols, 2)
         ax = axs[nr, nc] if nrows > 1 and ncols > 1 else axs[idx + nextrow]
-        for datakey, dataset in data.items():
-            motor, scans, xvals, yvals = observable_data(dataset, observable)
+        for key, dataset in data.items():
+            (motor, scans,
+             xvals, yvals, sigmas) = observable_data(dataset, observable)
             for yval in yvals:
-                dataset_plot(ax, xvals, yval, datakey, observable, motor,
+                dataset_plot(ax, xvals, yval, key, observable, motor,
                             first_item, last_item)
 
     plt.show()

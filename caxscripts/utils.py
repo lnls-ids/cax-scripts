@@ -7,7 +7,7 @@ from siriuspy.devices import CAXCtrl, DVF
 import matplotlib.pyplot as plt
 import epics
 
-from config import Config as Cfg
+from caxscripts.config import Config as Cfg
 
 
 # ## analysis functions ##

@@ -24,7 +24,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.patches import Ellipse
 from scipy.optimize import curve_fit
-from config import Config as Cfg
+from caxscripts.config import Config as Cfg
 from scipy.signal import savgol_filter
 
 # ---------------------------------------------------------------------------
