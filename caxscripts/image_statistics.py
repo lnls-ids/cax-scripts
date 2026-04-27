@@ -6,10 +6,12 @@ All functionality lives inside Histogram2DAnalyzer:
   - Histogram2DAnalyzer(img, xedges, yedges)  — from an existing histogram.
   - Histogram2DAnalyzer.from_gaussian(...)     — generate a Gaussian histogram.
 
-  Preprocessing
-  - add_noise(noisetype, level)  — add Poisson or Gaussian noise to self.img.
+  Quick Analysis (run on init)
+  - compute_quick()         — compute quick beam params (centroid, FWHM, visibility).
+  - beam_visible          — attribute: whether beam is visible.
+  - hprm_qck            — attribute: quick parameters dict.
 
-  Analysis pipeline
+  Full Analysis
   - compute_moments(img)   — weighted moments and principal-axis parameters.
   - fit(hprm)              — 2D Gaussian fit via nonlinear least squares.
   - compute_threshold()    — Kapur entropy thresholding.
@@ -18,6 +20,9 @@ All functionality lives inside Histogram2DAnalyzer:
   - print_stats(hprm)
   - plot(hprm, ...)
   - plot_entropy(entropies, bin_edges, optimal_threshold)
+
+  Orchestration
+  - analyze(mode)        — run analysis pipeline; mode in ('quick', 'moments', 'fit', 'all').
 """
 
 import numpy as np
@@ -39,7 +44,10 @@ ELLIPSES = ((1, COLORS["in"]), (2, COLORS["mid"]), (3, COLORS["out"]))
 ELLIPSES_TITLE = "2D Histogram with Ellipses"
 
 # Threshold for peak-to-average ratio acceptance of image.
-THRESHOLD = 100
+PEAK2AVG_THRESHOLD = 100
+
+# FWHM <-> sigma conversion: FWHM = f2sig * sigma
+FWHM2SIG = 2 * np.sqrt(2 * np.log(2))
 
 
 # ---------------------------------------------------------------------------
@@ -87,34 +95,179 @@ class Histogram2DAnalyzer:
             xedges: 1D array of x bin edges (length img.shape[0] + 1).
             yedges: 1D array of y bin edges (length img.shape[1] + 1).
             droi: half-size of the region of interest for beam visibility.
-        # data: original data array used to generate the histogram.
+
+        Runs compute_quick() automatically to populate beam_visible and hprm_qck.
         """
         self.img               = np.asarray(img,    dtype=float)
         self.xedges            = np.asarray(xedges, dtype=float)
         self.yedges            = np.asarray(yedges, dtype=float)
-        self.hprm_mom          = None
-        self.hprm_fit          = None
+        self.droi              = droi
+        self.beam_visible      = None  # set by compute_quick()
+        self.hprm_qck          = None  # quick params: cx, cy, fwhm_x, fwhm_y, sig_x, sig_y
+        self.hprm_mom          = None  # moments params
+        self.hprm_fit          = None  # fit params
         self.optimal_threshold = np.max(img) * 0.1
         self.img_thresholded   = None
-        self.data              = None  # np.asarray(data, dtype=float)
-        self.droi              = droi
+        self.data              = None
 
-    def fwhm_quick(self, data):
+        # Run quick analysis automatically
+        self.compute_quick()
+
+    # ------------------------------------------------------------------
+    # Quick analysis block (run on init).
+    # ------------------------------------------------------------------
+
+    def _compute_beam_visibility(self, cx, cy):
+        """Compute whether the beam is visible based on peak-to-average ratio.
+
+        Args:
+            cx: x-coordinate of the beam centroid.
+            cy: y-coordinate of the beam centroid.
+
+        Returns:
+            bool: True if the beam is considered visible.
+        """
+        roi_avg = np.mean(
+            self.img[cy - self.droi:cy + self.droi,
+                   cx - self.droi:cx + self.droi]
+        )
+        mean = np.mean(self.img)
+        ratio = roi_avg / mean if mean != 0 else 0
+        return ratio >= PEAK2AVG_THRESHOLD
+
+    def _qck_centroid(self):
+        """Calculate beam centroid via smoothed projected sums.
+
+        Returns:
+            np.array: [cx, cy] centroid coordinates.
+        """
+        cx_sum = np.sum(self.img, axis=0)
+        cy_sum = np.sum(self.img, axis=1)
+        xsmooth = savgol_filter(cx_sum, window_length=21, polyorder=2)
+        ysmooth = savgol_filter(cy_sum, window_length=21, polyorder=2)
+        return np.array([np.argmax(xsmooth), np.argmax(ysmooth)])
+
+    def _qck_fwhm(self, cx, cy):
+        """Calculate beam FWHM via half-max threshold.
+
+        Args:
+            cx: x-coordinate of the beam centroid.
+            cy: y-coordinate of the beam centroid.
+
+        Returns:
+            np.array: [fwhm_x, fwhm_y] in pixels.
+        """
+        x_profile = self.img[cy, :]
+        y_profile = self.img[:, cx]
+        fwhm_x = np.sum(x_profile > (x_profile.max() / 2))
+        fwhm_y = np.sum(y_profile > (y_profile.max() / 2))
+        return np.array([fwhm_x, fwhm_y])
+
+    @staticmethod
+    def sigma_to_fwhm(sig):
+        """Convert sigma to FWHM.
+
+        Args:
+            sig: sigma value(s).
+
+        Returns:
+            FWHM value(s).
+        """
+        return sig * FWHM2SIG
+
+    @staticmethod
+    def fwhm_to_sigma(fwhm):
+        """Convert FWHM to sigma (alias for _qck_sigma).
+
+        Args:
+            fwhm: FWHM value(s).
+
+        Returns:
+            sigma value(s).
+        """
+        return fwhm / FWHM2SIG
+
+    def compute_quick(self):
+        """Compute quick beam parameters automatically on init.
+
+        Sets self.beam_visible and self.hprm_qck if beam is visible.
+
+        Returns:
+            dict or None: hprm_qck if visible, None otherwise.
+        """
+        cx, cy = self._qck_centroid()
+        self.beam_visible = self._compute_beam_visibility(cx, cy)
+
+        if not self.beam_visible:
+            import warnings
+            warnings.warn("Beam not visible; skipping quick analysis.")
+            return None
+
+        fwhms = self._qck_fwhm(cx, cy)
+        sigx = self.fwhm_to_sigma(fwhms[0])
+        sigy = self.fwhm_to_sigma(fwhms[1])
+        self.hprm_qck = {
+            'mux': cx,
+            'muy': cy,
+            'fwhmx': fwhms[0],
+            'fwhmy': fwhms[1],
+            'sigx': sigx,
+            'sigy': sigy,
+        }
+        return self.hprm_qck
+
+    def analyze(self, mode='all', warn=True):
+        """Run analysis pipeline.
+
+        Args:
+            mode: 'quick' | 'moments' | 'fit' | 'all'. Default 'all'.
+            warn: print warning if beam not visible. Default True.
+
+        Returns:
+            dict with results based on mode.
+        """
+        if mode == 'quick':
+            return self.compute_quick()
+
+        if not self.beam_visible:
+            if warn:
+                import warnings
+                warnings.warn(
+                    f"Beam not visible (mode={mode}); "
+                    "skipping advanced analysis."
+                )
+            return None
+
+        result = {}
+
+        if mode in ('moments', 'all'):
+            result['moments'] = self.compute_moments()
+
+        if mode in ('fit', 'all'):
+            result['fit'] = self.fit()
+
+        return result
+
+    # ------------------------------------------------------------------
+    # Standalone helpers (kept for single-purpose use).
+    # ------------------------------------------------------------------
+
+    def qck_fwhm(self, data):
         """Calculate full width at half maximum quickly."""
         data = np.asarray(data)
-        threshold = 0.5*np.max(data)
+        threshold = 0.5 * np.max(data)
         mask = data > threshold
         return np.sum(mask) * Cfg.SCALE
 
-    def peak_value(self, data):
+    def qck_peak_value(self, data):
         """Calculate peak value."""
         return np.max(data)
 
-    def peak_position(self, data):
+    def qck_peak_position(self, data):
         """Calculate position of the peak."""
         return np.argmax(data) * Cfg.SCALE
 
-    def full_width(self, data, coords=None, hfactor=0.5):
+    def qck_full_width(self, data, coords=None, hfactor=0.5):
         """Calculate width at given height factor."""
         data = np.asarray(data)
         if coords is None:
@@ -123,239 +276,142 @@ class Histogram2DAnalyzer:
         data_half = data - hfactor * np.max(data)
 
         sign = np.sign(data_half)
-        idxleft, = np.nonzero(sign[:-1] + sign[1:] == 0)  # left, before zeros
-        idxright = idxleft + 1                            # right, after zeros
+        idxleft, = np.nonzero(sign[:-1] + sign[1:] == 0)
+        idxright = idxleft + 1
 
-        xl = coords[idxleft]  # x left
-        xr = coords[idxright]  # x right
-        yl = data_half[idxleft]    # y left
-        yr = data_half[idxright]   # y right
+        xl = coords[idxleft]
+        xr = coords[idxright]
+        yl = data_half[idxleft]
+        yr = data_half[idxright]
 
-        # linear interpolation to find the x-values at height
         zeros = (yr * xl - yl * xr) / (yr - yl)
         width = (zeros[-1] - zeros[0]) * Cfg.SCALE
 
         return width, zeros
 
+    # ------------------------------------------------------------------
+    # Caustic analysis helpers.
+    # ------------------------------------------------------------------
+
     def caustic_func(self, z, z0, amp, s0):
         """Calculate caustic function.
 
-        z: propagation position [m]
-        z0: waist position [m]
-        amp: amplitude [m]
-        s0: spread factor [m]
+        Args:
+            z: propagation position [m].
+            z0: waist position [m].
+            amp: amplitude [m].
+            s0: spread factor [m].
+
+        Returns:
+            beam width at position z.
         """
-        return amp * np.sqrt(1 + ((z - z0) / s0)**2)
+        return amp * np.sqrt(1 + ((z - z0) / s0) ** 2)
 
     def caustic_processing(self, params, positions):
-        """Process caustic scan results."""
+        """Process caustic scan results.
+
+        Args:
+            params: (z0, amp, s0) caustic parameters.
+            positions: array of scan positions.
+
+        Returns:
+            (z0, dof, zr): waist position, depth of focus, Rayleigh length.
+        """
         z = np.linspace(positions[0], positions[-1], 2000)
         widthscfit = self.caustic_func(z, *params)
 
         z0 = params[0]
-        dof = np.ptp(z[widthscfit <= 1.1*np.min(widthscfit)])/2
-        zr = np.ptp(z[widthscfit <= np.sqrt(2)*np.min(widthscfit)])/2
+        dof = np.ptp(z[widthscfit <= 1.1 * np.min(widthscfit)]) / 2
+        zr = np.ptp(z[widthscfit <= np.sqrt(2) * np.min(widthscfit)]) / 2
 
         return z0, dof, zr
 
+    # ------------------------------------------------------------------
+    # Scan-level helpers (for processing datasets).
+    # ------------------------------------------------------------------
+
     def _get_variable_metadata(self, scandata, dev_motor):
-        """Helper function to extract the variable metadata from the dataset.
+        """Extract variable metadata from scan data.
 
         Args:
-            scandata (dict): Dict containing data for a single step of a scan.
-            dev_motor (str): The device and motor being scanned
-                (e.g., 'mirror.rx').
+            scandata: dict containing data for a single scan step.
+            dev_motor: device and motor string (e.g., 'mirror.rx').
 
         Returns:
-            list: Metadata of the scanned variable:
-                [value, lolm, hilm, enable].
+            list: [value, lolm, hilm, enable].
         """
-        # Separate device and motor from the input string.
         device, motor = dev_motor.split('.')
 
         try:
-            # First try to get data directly from the scan attributes.
             if scandata['attrs'].get(dev_motor) is not None:
                 meta = scandata['attrs'].get(dev_motor)
-            # In the case of DVFs, the scanned variable is stored in
-            # the device group attributes.
             elif scandata.get(device, None) is not None:
                 meta = scandata[device]['attrs'].get(motor)
         except (KeyError, TypeError, ValueError) as err:
-            meta = None
-            raise ValueError(f"Could not extract scanned variable metadata"
-                            f"for {dev_motor}") from err
+            raise ValueError(f"Could not extract metadata for {dev_motor}") from err
         return meta
 
-    def beam_properties(self, dataset, dev_motor, threshold=THRESHOLD):
-        """Return properties of the beam profiles from the data dict.
+    def beam_properties(self, dataset, dev_motor, threshold=PEAK2AVG_THRESHOLD):
+        """Return beam properties from a full scan dataset.
 
         Args:
-            dataset (dict): Nested dict containing the set of one full scan.
-            dev_motor (str): The device and motor being scanned
-                (e.g., 'sample.x').
-            threshold (float): The minimum peak-to-average ratio required to
-                consider the beam visible. Default is 10.
+            dataset: dict mapping scan names to scan data.
+            dev_motor: device and motor being scanned.
+            threshold: minimum peak-to-average ratio.
 
         Returns:
-            beam_propties : A dict mapping scan numbers to (cx, cy), (fx, fy)
-                centroids and FWHMs.
-            beam_images   : A dict mapping scan numbers to DVF images
-                of the beam, only scans where the beam is visible are returned.
+            (beam_images, beam_properties): dicts mapping scan numbers.
         """
-        beam_propties = {}
-        beam_images   = {}
-        xval          = []
+        beam_props = {}
+        beam_imgs  = {}
 
         for scan, data in dataset.items():
-            # Extract scanning index and observable value.
             sc = int(scan.split('-')[-1])
-
-            # Get image data and calculate centroid.
             img = data['dvf_B1']['data']
 
-            # Centroids.
-            cx, cy = self.beam_centroid(img)
+            cx, cy = self._qck_centroid()
 
-            # Do not register properties if there is no beam image.
-            if not self.beam_visible(img, cx, cy, threshold):
+            if not self._compute_beam_visibility(cx, cy):
                 continue
 
-            # Extract the scanned variable value for this scan step.
             xval = float(self._get_variable_metadata(data, dev_motor)[0])
-
-            # FWHMs
-            fwhms = self.beam_fwhm(img, cx, cy, threshold)
-
-            # Sigmas.
-            sigmas = self.beam_sigma(fwhms)
-
-            # Intensity.
+            fwhms = self._qck_fwhm(cx, cy)
+            sigmas = self._qck_sigma(fwhms)
             exptime = data['dvf_B1']['attrs']['expo_time']
-            intensities = self.beam_intensity(img, [cx, cy], fwhms,
-                                              exptime, threshold)
+            intensities = self.qck_intensity(img, [cx, cy], fwhms, exptime, threshold)
 
-            # Dict is indexed by scan number.
-            beam_propties[sc] = [xval, [cx, cy], fwhms, sigmas, intensities]
-            beam_images[sc]   = img
+            beam_props[sc] = [xval, [cx, cy], fwhms, sigmas, intensities]
+            beam_imgs[sc] = img
 
-        return beam_images, beam_propties
+        return beam_imgs, beam_props
 
-    def beam_visible(self, img, cx, cy, threshold=THRESHOLD):
-        """Detect if a beam is present based on the peak-to-average ratio.
+    def qck_intensity(self, img, centroid, fwhms, exptime, droi=3):
+        """Calculate beam intensity via various normalizations.
 
         Args:
-            img (np.array): The 2D image array to analyze.
-            cx (int): The x-coordinate of the beam centroid.
-            cy (int): The y-coordinate of the beam centroid.
-            droi (int): The half-size of the region around the centroid used
-                to calculate the peak intensity. Default is 4 pixels.
-            threshold (float): The minimum peak-to-average ratio required to
-                consider the beam visible. Default is 10.
+            img: 2D image array.
+            centroid: (cx, cy) coordinates.
+            fwhms: (fwhm_x, fwhm_y).
+            exptime: exposure time.
+            droi: region of interest half-size.
 
         Returns:
-            bool: True if the beam is considered visible, False otherwise.
+            np.array: [peak, intensity_by_mask, peak_fwhm_norm].
         """
-        roi_avg = np.mean(img[cy-self.droi:cy+self.droi,
-                              cx-self.droi:cx+self.droi])
-        mean = np.mean(img)
-        ratio_rtom = roi_avg / mean if mean != 0 else 0
-        return ratio_rtom >= threshold
-
-    def beam_centroid(self, img):
-        """Return centroids of the beam profiles from the data dict.
-
-        Args:
-            img (np.array): The 2D image array to analyze.
-
-        Returns:
-            dict: A dict mapping scan numbers to (cx, cy) centroids.
-        """
-        # Centroid by projected sum.
-        cx_sum = np.sum(img, axis=0)
-        cy_sum = np.sum(img, axis=1)
-
-        # Filter central region.
-        xsmooth = savgol_filter(cx_sum, window_length=21, polyorder=2)
-        ysmooth = savgol_filter(cy_sum, window_length=21, polyorder=2)
-
-        # Centroid from smoothed profiles.
-        cx = np.argmax(xsmooth)
-        cy = np.argmax(ysmooth)
-
-        return np.array([cx, cy])
-
-    def beam_fwhm(self, img, cx, cy):
-        """Return fwhm of the beam profiles from the data dict.
-
-        Args:
-            img (np.array): The 2D image array to analyze.
-            cx (int): The x-coordinate of the beam centroid.
-            cy (int): The y-coordinate of the beam centroid.
-
-        Returns:
-            dict: A dict mapping scan numbers to (fx, fy) fwhm's.
-        """
-        # Beam profile through the centroid.
-        x_profile = img[cy, :]
-        y_profile = img[:, cx]
-
-        # FWHMs.
-        fwhm_x = np.sum(x_profile > (x_profile.max() / 2))
-        fwhm_y = np.sum(y_profile > (y_profile.max() / 2))
-
-        return np.array([fwhm_x, fwhm_y])
-
-    def beam_sigma(self, fwhm):
-        """Return sigma of the beam profiles from the data dict."""
-        # FWHM to sigma conversion factor.
-        f2sig = 2 * np.sqrt(2 * np.log(2))
-        return fwhm / f2sig
-
-    def beam_intensity(self, img, centroids, fwhms, exptime, droi=3):
-        """Return the total intensity of the beam profiles from the data dict.
-
-        Args:
-            img (np.array): The 2D image array to analyze.
-            centroids (tuple): The (cx, cy) coordinates of the beam centroid.
-            fwhms (tuple): The (fx, fy) full width at half maximum of the beam.
-            exptime (float): The exposure time of the image.
-            droi (int): The half-size of the region around the centroid used to
-                calculate the peak intensity. Default is 3 pixels.
-
-        Returns:
-            intensity: A list with scan variable and beam intensity at peak
-            region, based on different normalization methods.
-        """
-        # Get exposure time, image data, calculate centroid and fwhm.
-        # Get scan variable value.
-        cx, cy = centroids
+        cx, cy = centroid
         fx, fy = fwhms
 
-        # calculate peak value.
-        peak = np.mean(img[cy - droi : cy + droi + 1,
-                           cx - droi : cx + droi + 1])
-
-        # calculate peak normalized by exposure time.
+        peak = np.mean(img[cy - droi:cy + droi + 1, cx - droi:cx + droi + 1])
         peak /= exptime
+        peak_fwhm_norm = peak / (fx * fy) if fx * fy != 0 else 0
 
-        # Calculate peak normalized by fwhm product.
-        peak_fwhm_norm = (peak / (fx * fy)
-                          if fx * fy != 0 else 0)
-
-        # Intensity in the region above half maximum.
-        # Define mask and its area.
-        mask      = img > (peak / 2)
+        mask = img > (peak / 2)
         mask_area = np.sum(mask)
-
-        # Masked image and its area.
-        masked_img      = np.where(mask, img, 0)
+        masked_img = np.where(mask, img, 0)
         masked_img_area = np.sum(masked_img)
-
-        # Calculate intensity in masked area,
-        # normalized by area and exposure time.
-        intensity_by_mask = (masked_img_area / (mask_area * exptime)
-                            if mask_area != 0 else 0)
+        intensity_by_mask = (
+            masked_img_area / (mask_area * exptime) if mask_area != 0 else 0
+        )
 
         return np.array([peak, intensity_by_mask, peak_fwhm_norm])
 
@@ -563,6 +619,7 @@ class Histogram2DAnalyzer:
             "mux": mux, "muy": muy,
             "cov": covmat,
             "sigx": sigx, "sigy": sigy,
+            "fwhmx": self.sigma_to_fwhm(sigx), "fwhmy": self.sigma_to_fwhm(sigy),
             "sig_major": sig_major, "sig_minor": sig_minor,
             "theta": theta, "evecs": evecs,
             "xcenters": xcenters, "ycenters": ycenters,
@@ -638,6 +695,8 @@ class Histogram2DAnalyzer:
             "muy"       : popt[1],
             "sigx"      : sx,
             "sigy"      : sy,
+            "fwhmx"     : self.sigma_to_fwhm(sx),
+            "fwhmy"     : self.sigma_to_fwhm(sy),
             "cov"       : covmat,
             "sig_major" : sig_major,
             "sig_minor" : sig_minor,
@@ -674,19 +733,29 @@ class Histogram2DAnalyzer:
         return entropies, bin_edges, thr, nbins
 
     def print_stats(self, hprm=None):
-        """Print the moments / fit dictionary.
+        """Print parameters from any hprm dict.
 
         Arguments:
-            hprm: optional dict to print; defaults to self.hprm_mom.
+            hprm: optional dict to print; auto-selects from
+                  hprm_qck -> hprm_mom -> hprm_fit.
         """
         if hprm is None:
-            print("No parameters provided; using the calculated from moments.")
-            if self.hprm_mom is None:
-                self.compute_moments()
-            hprm = self.hprm_mom
-        print(f"mu         = ({hprm['mux']:.4e}, {hprm['muy']:.4e})")
+            hprm = self.hprm_qck or self.hprm_mom or self.hprm_fit
+        if hprm is None:
+            print("No parameters computed.")
+            return
+
+        print(f"centroid   = ({hprm['mux']:.4e}, {hprm['muy']:.4e})")
         print(f"sigma x    = {hprm['sigx']:.4e}\nsigma y"
               f"    = {hprm['sigy']:.4e}")
+
+        if 'fwhmx' in hprm:
+            print(f"fwhm x     = {hprm['fwhmx']:.4e}\nfwhm y"
+                  f"     = {hprm['fwhmy']:.4e}")
+
+        if 'cov' not in hprm:
+            return
+
         print(f"xy cov     = {hprm['cov'][0, 1]:.4e}\n")
         print(
             "principal sigmas:\n"
