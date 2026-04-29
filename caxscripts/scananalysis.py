@@ -1,53 +1,78 @@
 """Set of methods to analyze scan data and extract beam properties.
 
-This module provides functions to analyze Caracara data obtained
-from scanning with its motors. All data is expected to be stored
-in HDF5 files. The functions here defined are designed to read the
-data, extract beam properties such as centroids, intensities and
-FWHMs, and visualize the results.
-The main focus is on analyzing the beam profiles obtained from
-scans and understanding how they change with respect to the
-scanned variable (e.g., variations in Tx).
-Main functions:
+This module provides functions to analyze CARCARÁ-X beamline data obtained
+from scanning with its motors. All data is expected to be stored in HDF5 files.
+Functions are designed to read data, extract beam properties (centroids,
+intensities, FWHMs), and visualize results. The main focus is analyzing
+beam profiles and their variation with respect to the scanned variable
+(e.g., variations in Tx).
 
-- beam_centroid: Return centroids of the beam profiles from the data dict.
+Data Levels:
+The analysis operates at three hierarchical data levels:
+- data:     A single scan step, containing raw image data and metadata
+            for that step (e.g., one DVF image and motor position).
+- scandata: A full scan (one pass), composed of multiple 'data' steps
+            (e.g., all steps from one HDF5 file).
+- dataset:  Multiple scan passes of the same type, containing multiple
+            'scandata' dicts (e.g., all HDF5 files from repeated scans).
 
-- beam_fwhm: Return fwhm of the beam profiles from the data dict.
+Function Categories (matching module section structure):
 
-- beam_intensity: Return the total intensity of the beam profiles from
-    the data dict.
+Scan parameter extraction methods:
+- _get_variable_metadata: Extract scanned variable metadata from a single
+                          data step [data level].
 
-- beam_properties: Return properties of the beam profiles from the data dict.
+Beam properties extraction methods and analysis:
+- beam_visible:      Detect if a beam is present in a single image using
+                    peak-to-average ratio [data level].
+- beam_properties:   Extract centroids and FWHMs from all steps in a scan
+                    [scandata level].
+- beam_centroid:     Return centroids for all steps in a scan [scandata level;
+                    wraps beam_properties].
+- beam_fwhm:        Return FWHMs for all steps in a scan [scandata level;
+                    wraps beam_properties].
+- beam_intensity:    Return total intensity for all steps in a scan [scandata level;
+                    wraps beam_properties].
 
-- caustic_analysis: Perform caustic analysis on the given dataset.
+Methods for reading HDF5 files and exporting to dictionary structure:
+- files_in_directory: List files in a directory matching a regex pattern
+                      [utility, no scan data input].
+- h5_to_dict:        Read a single HDF5 file into a scandata dict [scandata level].
+- data_from_h5_files: Aggregate multiple HDF5 files into a dataset dict
+                      [dataset level].
 
-- centroid_plot: Plot the beam profile images and their centroids in a dataset.
+Functions to extract device (motor) and observable values across scans:
+- _get_dev_val:      Helper to extract device values from a scandata step
+                    [scandata level].
+- get_scan_data:     Extract observable and variable values across all
+                    dataset passes [dataset level].
 
-- correlate: Calculate the normalized cross-correlation between
-    two 1D arrays.
+Variable behavior and statistical analysis:
+- observable_data:      Extract observable behavior across steps in a single
+                        scan [scandata level].
+- observable_statistics: Calculate mean/median/std of an observable across
+                        dataset passes [dataset level].
 
-- data_from_h5_files: Read multiple HDF5 files into a nested dict.
+Correlation analysis functions:
+- correlate: Calculate normalized cross-correlation between two 1D arrays
+             [utility, generic math].
 
-- dataset_plot: Plot the behavior of an observable across scans for
-    a single dataset.
+Plotting functions:
+- dataset_plot:         Plot observable trace for a single scandata [scandata level].
+- centroid_plot:        Animate beam images and centroids for a scan pass
+                        [scandata level].
+- fwhm_plot:           Animate beam images and FWHMs for a scan pass
+                        [scandata level].
+- centroid_x_delta_plot: Plot motor/centroid changes across dataset passes
+                         [dataset level].
+- plot_double_observable: Plot two-component observables across passes
+                          [dataset level; helper].
+- scan_plot:            Main entry point to plot all observables across
+                         dataset passes [dataset level].
 
-- files_in_directory: List files in a directory matching a regex pattern.
-
-- fwhm_plot: Plot the beam profile images and their FWHMs in a dataset.
-
-- get_scan_data: Extract observable and variable values across scans.
-
-- h5_to_dict: Read an HDF5 file into a nested dict.
-
-- observable_data: Extract the behavior of a variable across scans
-    in a dataset.
-
-- observable_statistics: Calculate statistics of an observable across scans
-    in a dataset.
-
-- plot_double_observable: Plot two-component observables in separate subplots.
-
-- scan_plot: Plot the behavior of an observable across scans for each dataset.
+Legacy code (to be checked):
+- caustic_analysis: Perform caustic analysis on a single HDF5 file
+                     [scandata level].
 """
 import h5py
 import numpy as np
@@ -68,9 +93,172 @@ from . import utils
 THRESHOLD = 100
 
 #
-# Scan parameter extraction methods.
+# Utilities (file handling)
 #
 
+def files_in_directory(wdir, pattern):
+    """List files in a directory matching a regex pattern."""
+    rawfiles = os.listdir(wdir)
+    return sorted([f"{wdir}/{f}" for f in rawfiles if re.match(pattern, f)])
+
+
+def h5_to_dict(filename):
+    """Read an HDF5 file into a nested dict.
+
+    Structure:
+        data[group_name]['attrs']        -> group attributes (metadata)
+        data[group_name][dataset_name]   -> dict with 'data' (numpy array)
+                                           and 'attrs' (dataset attributes)
+    """
+    def _read_group(grp):
+        out = {'attrs': dict(grp.attrs)}
+        for name, item in grp.items():
+            if isinstance(item, h5py.Dataset):
+                out[name] = {'data': item[()], 'attrs': dict(item.attrs)}
+            elif isinstance(item, h5py.Group):
+                out[name] = _read_group(item)
+        return out
+
+    with h5py.File(filename, 'r') as f:
+        return {key: _read_group(f[key]) for key in f}
+
+#
+# Dataset level (multiple passes)
+#
+
+def dataset_from_h5_files(files):
+    """Read multiple HDF5 files into a `dataset` nested dict."""
+    dataset = {}
+    for filename in files:
+        key = re.sub('pass', '',
+                     os.path.basename(filename).split('_')[2].split('-')[0])
+        dataset[key] = h5_to_dict(filename)
+    return dataset
+
+def _get_dev_val(dataset, nscan, dev):
+    """Helper function to extract a device value from the dataset."""
+    val = dataset[nscan]['attrs'].get(dev)
+    if isinstance(val, (np.ndarray, list)):
+        val = val[0]
+    return val
+
+# Not used at the moment?
+def get_scan_data(dataset, variable, observable):
+    """Extract observable and variable values across scans."""
+    ndset = list(dataset.keys())
+    scandata = []
+    for ns in ndset:
+        scanlist = list(dataset[ns].keys())
+
+        obs_set = []
+        var_set = []
+
+        for nscan in scanlist:
+            obsval = _get_dev_val(dataset[ns], nscan, observable)
+            obs_set.append(obsval)
+            varval = _get_dev_val(dataset[ns], nscan, variable)
+            var_set.append(varval)
+
+        scandata.append((obs_set, var_set))
+
+    return scandata
+
+#
+# scandata level (one full scan)
+#
+
+def observable_data(scandata, observable):
+    """Extract the behavior of a variable across steps in a scan.
+
+    Args:
+        scandata (dict): Nested dict containing the set of
+                         one full scan (one pass).
+        observable (str): The variable to extract (e.g., 
+                          'photocollector', 'centroid').
+
+    Returns:
+        tuple: (motor, steps, xval, yval) where:
+        motor (str)      : The name of the scanned variable.
+        steps (np.array) : Array of step numbers.
+        xval (np.array)  : Array of scanned variable values.
+        yval (list of np.array): List of arrays containing the observable
+                                 values for each scan.
+    """
+    # The scanned variable (idx).
+    motor     = scandata['scan-0000']['attrs']['scan_motor']
+    device    = scandata['scan-0000']['attrs']['scan_device']
+    dev_motor = f"{device}.{motor}"
+
+    # Centroids are calculated in beam_centroid().
+    if observable == 'centroid':
+        steps, xvals, centrs, sigmas = beam_centroid(scandata, dev_motor)
+
+        # Centroid values, reshaped to [all x, all y].
+        centroids = [centrs[:, 0], centrs[:, 1]]
+
+        # Sigmas, reshaped to [all sx, all sy].
+        sigmas  = [sigmas[:, 0], sigmas[:, 1]]
+
+        return motor, steps, xvals, centroids, sigmas
+
+    # FWHMs are calculated in beam_fwhm().
+    if observable == 'fwhm':
+        fwhms = beam_fwhm(scandata, dev_motor)
+
+        # Dict is ordered by scan number.
+        steps = np.array(list(fwhms.keys()))
+
+        # Observable values.
+        xvals = np.array([fwhms[sc][0] for sc in steps])
+
+        # FWHM values.
+        cvalues = np.array([fwhms[sc][1] for sc in steps])
+        fwhms   = [cvalues[:, 0], cvalues[:, 1]]
+
+        return motor, steps, xvals, fwhms, None
+
+    # Intensities are calculated in beam_intensity().
+    if observable == 'intensity':
+        intensities = beam_intensity(scandata, dev_motor)
+
+        # Dict is ordered by scan number.
+        steps = np.array(list(intensities.keys()))
+
+        # Observable values.
+        xvals = np.array([intensities[sc][0] for sc in steps])
+
+        # Intensity values.
+        cvalues      = np.array([intensities[sc][1] for sc in steps])
+        intensities = [cvalues[:, 0], cvalues[:, 1], cvalues[:, 2]]
+
+        # Sigmas
+        sigmas = [np.sqrt(intens) for intens in intensities]
+
+        return motor, steps, xvals, intensities, sigmas
+
+    steps, xval, yval = [], [], []
+    # Run over each point scanned.
+    for step, stepdata in scandata.items():
+        # Get scan number, scanning index and observable value.
+        steps.append(int(step.split('-')[-1]))
+        xmeta = _get_variable_metadata(stepdata, dev_motor)
+        ymeta = stepdata['attrs'].get(f"{device}.{observable}")
+
+        # Append the values, handling both scalar and array metadata cases.
+        if isinstance(xmeta, list) or isinstance(xmeta, np.ndarray):
+            xval.append(float(xmeta[0]))
+        else:
+            xval.append(float(xmeta))
+        if isinstance(ymeta, list) or isinstance(ymeta, np.ndarray):
+            yval.append(float(ymeta[0]))
+        else:
+            yval.append(float(ymeta))
+
+    return motor, np.array(steps), np.array(xval), [np.array(yval)], None
+
+#
+# Data level (one scan step)
+#
 
 def _get_variable_metadata(data, dev_motor):
     """Helper function to extract the variable metadata from the dataset.
@@ -99,6 +287,13 @@ def _get_variable_metadata(data, dev_motor):
         raise ValueError(f"Could not extract scanned variable metadata"
                          f"for {dev_motor}") from err
     return meta
+
+#
+# Scan parameter extraction methods.
+#
+
+
+
 
 #
 # Beam properties extraction methods and analysis.
@@ -301,74 +496,16 @@ def beam_visible(img, cx, cy, droi=4, threshold=THRESHOLD):
 # Methods for reading HDF5 files and exporting to dictionary structure.
 #
 
-def data_from_h5_files(files):
-    """Read multiple HDF5 files into a nested dict."""
-    data = {}
-    for filename in files:
-        key = re.sub('pass', '',
-                     os.path.basename(filename).split('_')[2].split('-')[0])
-        data[key] = h5_to_dict(filename)
-    return data
 
 
-def files_in_directory(wdir, pattern):
-    """List files in a directory matching a regex pattern."""
-    rawfiles = os.listdir(wdir)
-    return sorted([f"{wdir}/{f}" for f in rawfiles if re.match(pattern, f)])
 
 
-def h5_to_dict(filename):
-    """Read an HDF5 file into a nested dict.
-
-    Structure:
-        data[group_name]['attrs']        -> group attributes (metadata)
-        data[group_name][dataset_name]   -> dict with 'data' (numpy array)
-                                           and 'attrs' (dataset attributes)
-    """
-    def _read_group(grp):
-        out = {'attrs': dict(grp.attrs)}
-        for name, item in grp.items():
-            if isinstance(item, h5py.Dataset):
-                out[name] = {'data': item[()], 'attrs': dict(item.attrs)}
-            elif isinstance(item, h5py.Group):
-                out[name] = _read_group(item)
-        return out
-
-    with h5py.File(filename, 'r') as f:
-        return {key: _read_group(f[key]) for key in f}
 
 
 #
 # Functions to extract device (motor) and observable values across scans.
 #
 
-def _get_dev_val(dataset, nscan, dev):
-    """Helper function to extract a device value from the dataset."""
-    val = dataset[nscan]['attrs'].get(dev)
-    if isinstance(val, (np.ndarray, list)):
-        val = val[0]
-    return val
-
-
-def get_scan_data(data, variable, observable):
-    """Extract observable and variable values across scans."""
-    ndset = list(data.keys())
-    datascans = []
-    for ns in ndset:
-        scanlist = list(data[ns].keys())
-
-        obs_set = []
-        var_set = []
-
-        for nscan in scanlist:
-            obsval = _get_dev_val(data[ns], nscan, observable)
-            obs_set.append(obsval)
-            varval = _get_dev_val(data[ns], nscan, variable)
-            var_set.append(varval)
-
-        datascans.append((obs_set, var_set))
-
-    return datascans
 
 
 #
@@ -376,94 +513,7 @@ def get_scan_data(data, variable, observable):
 #
 
 
-def observable_data(data, observable):
-    """Extract the behavior of a variable across scans in a dataset.
 
-    Args:
-        data (dict): Nested dict containing the set of
-            one full scan (one pass).
-        observable (str): The variable to extract
-            (e.g., 'photocollector', 'centroid').
-
-    Returns:
-        tuple: (motor, scans, xval, yval) where:
-        motor (str)      : The name of the scanned variable.
-        scans (np.array) : Array of scan numbers.
-        xval (np.array)  : Array of scanned variable values.
-        yval (list of np.array): List of arrays containing the observable
-            values for each scan.
-    """
-    # The scanned variable (idx).
-    motor     = data['scan-0000']['attrs']['scan_motor']
-    device    = data['scan-0000']['attrs']['scan_type']
-    dev_motor = f"{device}.{motor}"
-
-    # Centroids are calculated in beam_centroid().
-    if observable == 'centroid':
-        scans, xvals, centrs, sigmas = beam_centroid(data, dev_motor)
-
-        # Centroid values, reshaped to [all x, all y].
-        centroids = [centrs[:, 0], centrs[:, 1]]
-
-        # Sigmas, reshaped to [all sx, all sy].
-        sigmas  = [sigmas[:, 0], sigmas[:, 1]]
-
-        return motor, scans, xvals, centroids, sigmas
-
-    # FWHMs are calculated in beam_fwhm().
-    if observable == 'fwhm':
-        fwhms = beam_fwhm(data, dev_motor)
-
-        # Dict is ordered by scan number.
-        scans = np.array(list(fwhms.keys()))
-
-        # Observable values.
-        xvals = np.array([fwhms[sc][0] for sc in scans])
-
-        # FWHM values.
-        cvalues = np.array([fwhms[sc][1] for sc in scans])
-        fwhms   = [cvalues[:, 0], cvalues[:, 1]]
-
-        return motor, scans, xvals, fwhms, None
-
-    # Intensities are calculated in beam_intensity().
-    if observable == 'intensity':
-        intensities = beam_intensity(data, dev_motor)
-
-        # Dict is ordered by scan number.
-        scans = np.array(list(intensities.keys()))
-
-        # Observable values.
-        xvals = np.array([intensities[sc][0] for sc in scans])
-
-        # Intensity values.
-        cvalues      = np.array([intensities[sc][1] for sc in scans])
-        intensities = [cvalues[:, 0], cvalues[:, 1], cvalues[:, 2]]
-
-        # Sigmas
-        sigmas = [np.sqrt(intens) for intens in intensities]
-
-        return motor, scans, xvals, intensities, sigmas
-
-    scans, xval, yval = [], [], []
-    # Run over each point scanned.
-    for scan, scandata in data.items():
-        # Get scan number, scanning index and observable value.
-        scans.append(int(scan.split('-')[-1]))
-        xmeta = _get_variable_metadata(scandata, dev_motor)
-        ymeta = scandata['attrs'].get(f"{device}.{observable}")
-
-        # Append the values, handling both scalar and array metadata cases.
-        if isinstance(xmeta, list) or isinstance(xmeta, np.ndarray):
-            xval.append(float(xmeta[0]))
-        else:
-            xval.append(float(xmeta))
-        if isinstance(ymeta, list) or isinstance(ymeta, np.ndarray):
-            yval.append(float(ymeta[0]))
-        else:
-            yval.append(float(ymeta))
-
-    return motor, np.array(scans), np.array(xval), [np.array(yval)], None
 
 
 def observable_statistics(data, observable):
