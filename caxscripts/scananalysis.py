@@ -11,7 +11,7 @@ Data Levels:
 The analysis operates at three hierarchical data levels:
 - data:     A single scan step, containing raw image data and metadata
             for that step (e.g., one DVF image and motor position).
-- scandata: A full scan (one pass), composed of multiple 'data' steps
+- scan:     A full scan (one pass), composed of multiple 'data' steps
             (e.g., all steps from one HDF5 file).
 - dataset:  Multiple scan passes of the same type, containing multiple
             'scandata' dicts (e.g., all HDF5 files from repeated scans).
@@ -92,9 +92,9 @@ from . import utils
 # Threshold for peak-to-average ratio acceptance of image.
 THRESHOLD = 100
 
-#
-# Utilities (file handling)
-#
+# ==================================================
+#           Utilities (file handling)
+# ==================================================
 
 def files_in_directory(wdir, pattern):
     """List files in a directory matching a regex pattern."""
@@ -122,9 +122,9 @@ def h5_to_dict(filename):
     with h5py.File(filename, 'r') as f:
         return {key: _read_group(f[key]) for key in f}
 
-#
-# Dataset level (multiple passes)
-#
+# ==================================================
+#           Dataset level (multiple passes)
+# ==================================================
 
 def dataset_from_h5_files(files):
     """Read multiple HDF5 files into a `dataset` nested dict."""
@@ -163,9 +163,9 @@ def get_scan_data(dataset, variable, observable):
 
     return scandata
 
-#
-# scandata level (one full scan)
-#
+# ==================================================
+#           Scan level (one full scan)
+# ==================================================
 
 def observable_data(scandata, observable):
     """Extract the behavior of a variable across steps in a scan.
@@ -256,9 +256,81 @@ def observable_data(scandata, observable):
 
     return motor, np.array(steps), np.array(xval), [np.array(yval)], None
 
-#
-# Data level (one scan step)
-#
+from caxscripts.image_statistics import Histogram2DAnalyzer
+
+def beam_properties(scandata, dev_motor, droi=4, analysis_mode='qck'):
+    """Return properties of the beam profiles from the datascan dict.
+    Operates on a full scan, linking scanned variable value to beam 
+    images and properties. Utilizes the `Histogram2DAnalyzer` class
+    from the `image_statistics` module.  
+
+    Args:
+        scandata (dict): Nested dict containing the set of one full scan.
+        dev_motor (str): The device and motor being scanned (e.g., 'sample.x').
+        droi (int): The half-size of the region around the centroid used to
+            determine if the beam is visible. Default is 4 pixels.
+        analysis_mode (str): the way to compute image properties, 'qck' for quick
+            analysis, 'mom' for analysis through moments calculation and 'fit' for
+            non-linear gaussian fitting. Defaults to 'qck'. 
+        threshold (float): The minimum peak-to-average ratio required to
+            consider the beam visible. Default is 100.
+
+    Returns:
+        beam_images (dict): A dict mapping step numbers to DVF images of the beam,
+            only scans where the beam is visible are returned.
+        
+        **beam_propties**: *dict* \n
+            A dict mapping step numbers to (cx, cy), (fx, fy)
+            centroids and FWHMs.
+    """
+    beam_propties = {}
+    beam_images   = {}
+    xval          = []
+
+    for step, data in scandata.items():
+        # Extract scanning index and observable value.
+        st = int(step.split('-')[-1])
+
+        # Extract the scanned variable value for this step.
+        xval = float(_get_variable_metadata(data, dev_motor)[0])
+
+        # Get image data and calculate centroid.
+        img = data['dvf_B1']['data'].T
+        img_xedges = np.arange(img.shape[0]+1)
+        img_yedges = np.arange(img.shape[1]+1)
+
+
+        ana = Histogram2DAnalyzer(img, 
+                                  xedges=img_xedges,
+                                  yedges=img_yedges,
+                                  droi=droi)
+        if not ana.beam_visible:
+            continue
+
+        hprm = ana.analyze(analysis_mode)[analysis_mode]
+
+        # Centroids
+        cx = hprm['mux']
+        cy = hprm['muy']
+
+        # FWHMs
+        fwhm_x = hprm['fwhmx']
+        fwhm_y = hprm['fwhmy']
+        
+        beam_propties[st] = [xval, [cx, cy], [fwhm_x, fwhm_y]]
+        beam_images[st]   = img
+
+        # Right now, as 'qck' is set as the default analysis mode, the
+        # behaviour is the exact same as was previously implemented, 
+        # justifying the deletion of the old code. For moment and fitting
+        # calculation, it remains to define the use of a ROI and to handle
+        # thresholding adequately.
+
+    return beam_images, beam_propties
+
+# ==================================================
+#           Data level (one scan step)
+# ==================================================
 
 def _get_variable_metadata(data, dev_motor):
     """Helper function to extract the variable metadata from the dataset.
@@ -348,7 +420,7 @@ def beam_fwhm(datascan, dev_motor, droi=4, threshold=THRESHOLD):
             consider the beam visible. Default is 10.
 
     Returns:
-        dict: A dict mapping scan numbers to (fx, fy) fwhm's.
+        fwhms (dict): A dict mapping scan numbers to (fx, fy) fwhm's.
     """
     fwhms = {}
     _, beam_propties = beam_properties(datascan, dev_motor, droi, threshold)
@@ -409,65 +481,7 @@ def beam_intensity(datascan, dev_motor, droi=4, threshold=THRESHOLD):
     return intensities
 
 
-def beam_properties(datascan, dev_motor, droi=4, threshold=THRESHOLD):
-    """Return properties of the beam profiles from the data dict.
 
-    Args:
-        datascan (dict): Nested dict containing the set of one full scan.
-        dev_motor (str): The device and motor being scanned (e.g., 'sample.x').
-        droi (int): The half-size of the region around the centroid used to
-            determine if the beam is visible. Default is 4 pixels.
-        threshold (float): The minimum peak-to-average ratio required to
-            consider the beam visible. Default is 10.
-
-    Returns:
-        beam_propties : A dict mapping scan numbers to (cx, cy), (fx, fy)
-            centroids and FWHMs.
-        beam_images   : A dict mapping scan numbers to DVF images of the beam,
-            only scans where the beam is visible are returned.
-    """
-    beam_propties = {}
-    beam_images   = {}
-    xval          = []
-
-    for scan, data in datascan.items():
-        # Extract scanning index and observable value.
-        sc = int(scan.split('-')[-1])
-
-        # Extract the scanned variable value for this scan step.
-        xval = float(_get_variable_metadata(data, dev_motor)[0])
-
-        # Get image data and calculate centroid.
-        img = data['dvf_B1']['data']
-
-        # Centroids.
-        # cx = np.sum(img, axis=0).argmax()
-        # cy = np.sum(img, axis=1).argmax()
-        cx_sum = np.sum(img, axis=0)
-        cy_sum = np.sum(img, axis=1)
-
-        xsmooth = savgol_filter(cx_sum, window_length=21, polyorder=2)
-        ysmooth = savgol_filter(cy_sum, window_length=21, polyorder=2)
-
-        cx = np.argmax(xsmooth)
-        cy = np.argmax(ysmooth)
-
-        # FWHMs
-        x_profile = img[cy, :]
-        y_profile = img[:, cx]
-
-        fwhm_x = np.sum(x_profile > (x_profile.max() / 2))
-        fwhm_y = np.sum(y_profile > (y_profile.max() / 2))
-
-        # Do not register properties if there is no beam image.
-        if not beam_visible(img, cx, cy, droi, threshold):
-            continue
-
-        # Dict is indexed by scan number.
-        beam_propties[sc] = [xval, [cx, cy], [fwhm_x, fwhm_y]]
-        beam_images[sc]   = img
-
-    return beam_images, beam_propties
 
 
 def beam_visible(img, cx, cy, droi=4, threshold=THRESHOLD):

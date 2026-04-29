@@ -351,6 +351,8 @@ class Histogram2DAnalyzer:
             raise ValueError(f"Could not extract metadata for {dev_motor}") from err
         return meta
 
+    # Obsolete:  this shouldn't be here, as `Histogram2DAnalyzer` is a class 
+    # concerned solely with single scan steps.
     def beam_properties(self, dataset, dev_motor, threshold=PEAK2AVG_THRESHOLD):
         """Return beam properties from a full scan dataset.
 
