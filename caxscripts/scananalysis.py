@@ -23,23 +23,21 @@ Scan parameter extraction methods:
                           data step [data level].
 
 Beam properties extraction methods and analysis:
-- beam_visible:      Detect if a beam is present in a single image using
-                    peak-to-average ratio [data level].
-- beam_properties:   Extract centroids and FWHMs from all steps in a scan
-                    [scandata level].
+- beam_from_scan:   Extract beam properties from all steps in a scan
+                     [scandata level].
 - beam_centroid:     Return centroids for all steps in a scan [scandata level;
-                    wraps beam_properties].
-- beam_fwhm:        Return FWHMs for all steps in a scan [scandata level;
-                    wraps beam_properties].
+                    wraps beam_from_scan].
+- beam_fwhm:         Return FWHMs for all steps in a scan [scandata level;
+                    wraps beam_from_scan].
 - beam_intensity:    Return total intensity for all steps in a scan [scandata level;
-                    wraps beam_properties].
+                    wraps beam_from_scan].
 
 Methods for reading HDF5 files and exporting to dictionary structure:
 - files_in_directory: List files in a directory matching a regex pattern
                       [utility, no scan data input].
 - h5_to_dict:        Read a single HDF5 file into a scandata dict [scandata level].
-- data_from_h5_files: Aggregate multiple HDF5 files into a dataset dict
-                      [dataset level].
+- dataset_from_h5_files: Aggregate multiple HDF5 files into a dataset dict
+                          [dataset level].
 
 Functions to extract device (motor) and observable values across scans:
 - _get_dev_val:      Helper to extract device values from a scandata step
@@ -48,27 +46,27 @@ Functions to extract device (motor) and observable values across scans:
                     dataset passes [dataset level].
 
 Variable behavior and statistical analysis:
-- observable_data:      Extract observable behavior across steps in a single
-                        scan [scandata level].
-- observable_statistics: Calculate mean/median/std of an observable across
-                        dataset passes [dataset level].
+- observable_data:        Extract observable behavior across steps in a single
+                          scan [scandata level].
+- observable_statistics:   Calculate mean/median/std of an observable across
+                          dataset passes [dataset level].
 
 Correlation analysis functions:
 - correlate: Calculate normalized cross-correlation between two 1D arrays
              [utility, generic math].
 
-Plotting functions:
-- dataset_plot:         Plot observable trace for a single scandata [scandata level].
-- centroid_plot:        Animate beam images and centroids for a scan pass
-                        [scandata level].
-- fwhm_plot:           Animate beam images and FWHMs for a scan pass
-                        [scandata level].
-- centroid_x_delta_plot: Plot motor/centroid changes across dataset passes
-                         [dataset level].
-- plot_double_observable: Plot two-component observables across passes
+Plotting functions (see dedicated section below):
+- dataset_plot:           Plot observable trace for a single scandata [scandata level].
+- centroid_plot:          Animate beam images and centroids for a scan pass
+                          [scandata level].
+- fwhm_plot:              Animate beam images and FWHMs for a scan pass
+                          [scandata level].
+- centroid_x_delta_plot:  Plot motor/centroid changes across dataset passes
+                           [dataset level].
+- plot_double_observable:  Plot two-component observables across passes
                           [dataset level; helper].
-- scan_plot:            Main entry point to plot all observables across
-                         dataset passes [dataset level].
+- scan_plot:              Main entry point to plot all observables across
+                          dataset passes [dataset level].
 
 Legacy code (to be checked):
 - caustic_analysis: Perform caustic analysis on a single HDF5 file
@@ -89,18 +87,19 @@ from scipy.signal import savgol_filter
 from scipy.optimize import curve_fit
 from . import utils
 
+from caxscripts.image_statistics import Histogram2DAnalyzer
+
 # Threshold for peak-to-average ratio acceptance of image.
 THRESHOLD = 100
 
 # ==================================================
-#           Utilities (file handling)
+#                    Utilities 
 # ==================================================
 
 def files_in_directory(wdir, pattern):
     """List files in a directory matching a regex pattern."""
     rawfiles = os.listdir(wdir)
     return sorted([f"{wdir}/{f}" for f in rawfiles if re.match(pattern, f)])
-
 
 def h5_to_dict(filename):
     """Read an HDF5 file into a nested dict.
@@ -121,6 +120,17 @@ def h5_to_dict(filename):
 
     with h5py.File(filename, 'r') as f:
         return {key: _read_group(f[key]) for key in f}
+
+
+#
+# Correlation analysis functions.
+#
+def correlate(a, b):
+    """Calculate the normalized cross-correlation between two 1D arrays."""
+    a = a - np.mean(a)
+    b = b - np.mean(b)
+    norm = np.std(a) * np.std(b) * len(a)
+    return np.correlate(a, b, mode='full') / norm
 
 # ==================================================
 #           Dataset level (multiple passes)
@@ -162,6 +172,45 @@ def get_scan_data(dataset, variable, observable):
         scandata.append((obs_set, var_set))
 
     return scandata
+
+#
+# Variable behavior and statistical analysis.
+#
+def observable_statistics(dataset, observable):
+    """Calculate statistics of an observable across scans in a dataset.
+
+    Args:
+        dataset (dict): Nested dict containing the set of all passes.
+        observable (str): The variable to analyze (e.g., 'photocollector',
+            'centroid').
+        droi (int): The half-size of the region around the centroid used to
+            determine if the beam is visible. Default is 4 pixels.
+        threshold (float): The minimum peak-to-average ratio required to
+            consider the beam visible. Default is 10.
+
+    Returns:
+        dict: A dict mapping dataset keys to statistics of the observable,
+            including mean, median, and standard deviation.
+    """
+    yscans = []
+    for scandata in dataset.values():
+        (motor, scans,
+         xvals, yvals, sigmas) = observable_data(scandata, observable)
+        yscans.append(yvals)
+
+    # Calculate statistics for each dataset.
+    yscans = np.array(yscans)
+    yavg   = np.mean(yscans, axis=0)
+    ymed   = np.median(yscans, axis=0)
+    ystd   = np.std(yscans, axis=0)
+
+    stats = {
+        'xval'    : xvals,
+        'mean'    : yavg,
+        'median'  : ymed,
+        'std_dev' : ystd
+    }
+    return stats
 
 # ==================================================
 #           Scan level (one full scan)
@@ -256,9 +305,12 @@ def observable_data(scandata, observable):
 
     return motor, np.array(steps), np.array(xval), [np.array(yval)], None
 
-from caxscripts.image_statistics import Histogram2DAnalyzer
 
-def beam_properties(scandata, dev_motor, droi=4, analysis_mode='qck'):
+
+#
+# Beam properties extraction methods and analysis.
+#
+def beam_from_scan(scandata, dev_motor, droi=4, analysis_mode='qck'):
     """Return properties of the beam profiles from the datascan dict.
     Operates on a full scan, linking scanned variable value to beam 
     images and properties. Utilizes the `Histogram2DAnalyzer` class
@@ -269,23 +321,18 @@ def beam_properties(scandata, dev_motor, droi=4, analysis_mode='qck'):
         dev_motor (str): The device and motor being scanned (e.g., 'sample.x').
         droi (int): The half-size of the region around the centroid used to
             determine if the beam is visible. Default is 4 pixels.
-        analysis_mode (str): the way to compute image properties, 'qck' for quick
-            analysis, 'mom' for analysis through moments calculation and 'fit' for
-            non-linear gaussian fitting. Defaults to 'qck'. 
+        analysis_mode (str): what method to use for analyzing image properties, 
+            'qck' for quick analysis, 'mom' for analysis through moments calculation 
+            and 'fit' for non-linear gaussian fitting. Defaults to 'qck'. 
         threshold (float): The minimum peak-to-average ratio required to
             consider the beam visible. Default is 100.
 
     Returns:
-        beam_images (dict): A dict mapping step numbers to DVF images of the beam,
-            only scans where the beam is visible are returned.
-        
-        **beam_propties**: *dict* \n
-            A dict mapping step numbers to (cx, cy), (fx, fy)
-            centroids and FWHMs.
+        beam_instances (dict): A dict mapping step numbers to H2DA instances
+            containing the image and its properties, only scans where the beam
+            is visible are returned.
     """
-    beam_propties = {}
-    beam_images   = {}
-    xval          = []
+    beam_instances = {}
 
     for step, data in scandata.items():
         # Extract scanning index and observable value.
@@ -299,26 +346,21 @@ def beam_properties(scandata, dev_motor, droi=4, analysis_mode='qck'):
         img_xedges = np.arange(img.shape[0]+1)
         img_yedges = np.arange(img.shape[1]+1)
 
-
         ana = Histogram2DAnalyzer(img, 
                                   xedges=img_xedges,
                                   yedges=img_yedges,
                                   droi=droi)
+        
         if not ana.beam_visible:
             continue
 
-        hprm = ana.analyze(analysis_mode)[analysis_mode]
+        # Perform the analysis to extract beam properties based on the 
+        # specified mode. Quick analysis is always perfomed 
+        ana.analyze(analysis_mode)
 
-        # Centroids
-        cx = hprm['mux']
-        cy = hprm['muy']
-
-        # FWHMs
-        fwhm_x = hprm['fwhmx']
-        fwhm_y = hprm['fwhmy']
-        
-        beam_propties[st] = [xval, [cx, cy], [fwhm_x, fwhm_y]]
-        beam_images[st]   = img
+        # Return a dict linking scanned variable value to a H2DA
+        # instance containing the image and its properties.
+        beam_instances[st] = [xval, ana]
 
         # Right now, as 'qck' is set as the default analysis mode, the
         # behaviour is the exact same as was previously implemented, 
@@ -326,12 +368,131 @@ def beam_properties(scandata, dev_motor, droi=4, analysis_mode='qck'):
         # calculation, it remains to define the use of a ROI and to handle
         # thresholding adequately.
 
-    return beam_images, beam_propties
+    return beam_instances
 
+def beam_centroid(datascan, dev_motor, droi=4, analysis_mode='qck', threshold=THRESHOLD):
+    """Return centroids of the beam profiles from the data dict.
+
+    Args:
+        datascan (dict): Nested dict containing the set of one full scan.
+        dev_motor (str): The device and motor being scanned
+            (e.g., 'mirror.rx').
+        droi (int): The half-size of the region around the centroid used to
+            determine if the beam is visible. Default is 4 pixels.
+        analysis_mode (str): The mode of analysis to use. Default is 'qck'.
+        threshold (float): The minimum peak-to-average ratio required to
+            consider the beam visible. Default is 100.
+
+    Returns:
+        dict: A dict mapping scan numbers to (cx, cy) centroids.
+    """
+    # FWHM to sigma conversion factor.
+    f2sig = 2 * np.sqrt(2 * np.log(2))
+
+    # Calculate beam properties for all scans.
+    beam_instances = beam_from_scan(datascan, dev_motor, droi, analysis_mode)
+
+    steps, xvals, centrs, sigmas  = [], [], [], []
+    for st, values in beam_instances.items():
+        steps.append(st)
+        xvals.append(values[0])
+        
+        ana = values[1]
+        hprm = getattr(ana, f"bprm_{analysis_mode}")
+        
+        centrs.append([hprm['mux'], hprm['muy']])
+
+        sigmas.append([hprm['sigx'], hprm['sigy']])
+
+    return (np.array(steps), np.array(xvals),
+            np.array(centrs), np.array(sigmas))
+
+def beam_fwhm(datascan, dev_motor, droi=4, analysis_mode='qck', threshold=THRESHOLD):
+    """Return fwhm of the beam profiles from the data dict.
+
+    Args:
+        datascan (dict): Nested dict containing the set of one full scan
+            (one pass).
+        dev_motor (str): The device and motor being scanned (e.g., 'sample.x').
+        droi (int): The half-size of the region around the centroid used to
+            determine if the beam is visible. Default is 4 pixels.
+        analysis_mode (str): The mode of analysis to use. Default is 'qck'.
+        threshold (float): The minimum peak-to-average ratio required to
+            consider the beam visible. Default is 10.
+
+    Returns:
+        fwhms (dict): A dict mapping scan numbers to (fx, fy) fwhm's.
+    """
+    fwhms = {}
+    beam_instances = beam_from_scan(datascan, dev_motor, droi, analysis_mode)
+
+    for st in beam_instances.keys():
+        xval   = beam_instances[st][0]
+        
+        ana = beam_instances[st][1]
+        hprm = getattr(ana, f"bprm_{analysis_mode}")
+        fx, fy = hprm['fwhmx'], hprm['fwhmy']
+
+        fwhms[st] = [xval, [fx, fy]]
+
+    return fwhms
+
+def beam_intensity(datascan, dev_motor, droi=4, analysis_mode='qck', threshold=THRESHOLD):
+    """Return the total intensity of the beam profiles from the data dict.
+
+    Args:
+        datascan (dict): Nested dict containing the set of one full scan
+            (one pass).
+        dev_motor (str): The device and motor being scanned (e.g., 'sample.x').
+        droi (int): The half-size of the region around the centroid used to
+            determine if the beam is visible. Default is 4 pixels.
+        analysis_mode (str): The mode of analysis to use. Default is 'qck'.
+        threshold (float): The minimum peak-to-average ratio required to
+            consider the beam visible. Default is 10.
+
+    Returns:
+        dict: A dict mapping scan numbers to total intensity.
+    """
+    beam_instances = beam_from_scan(datascan, dev_motor,
+                                    droi, analysis_mode)
+    exptime = datascan['scan-0000']['dvf_B1']['attrs']['expo_time']
+
+    intensities = {}
+    droi = 2
+    for sc in beam_instances.keys():
+        xval = beam_instances[sc][0]
+        ana  = beam_instances[sc][1]
+        hprm = getattr(ana, f"bprm_{analysis_mode}")
+
+        img            = ana.img
+        cx, cy         = hprm['mux'], hprm['muy']
+        fwhm_x, fwhm_y = hprm['fwhmx'], hprm['fwhmy']
+
+        peak = np.mean(img[cy - droi : cy + droi + 1,
+                           cx - droi : cx + droi + 1])
+
+        mask = img > (peak / 2)
+        area_mask  = np.sum(mask)
+        img_masked = np.where(mask, img, 0)
+        area_img_masked = np.sum(img_masked)
+
+        intensity_by_mask = (area_img_masked / (area_mask * exptime)
+                             if area_mask != 0 else 0)
+
+        peak /= exptime
+        peak_fwhm_norm = (peak / (fwhm_x * fwhm_y)
+                          if fwhm_x * fwhm_y != 0 else 0)
+
+        intensities[sc] = [xval, [peak, intensity_by_mask, peak_fwhm_norm]]
+
+    return intensities
 # ==================================================
 #           Data level (one scan step)
 # ==================================================
 
+#
+# Scan parameter extraction methods.
+#
 def _get_variable_metadata(data, dev_motor):
     """Helper function to extract the variable metadata from the dataset.
 
@@ -360,227 +521,14 @@ def _get_variable_metadata(data, dev_motor):
                          f"for {dev_motor}") from err
     return meta
 
-#
-# Scan parameter extraction methods.
-#
 
-
-
-
-#
-# Beam properties extraction methods and analysis.
-#
-
-
-def beam_centroid(datascan, dev_motor, droi=4, threshold=THRESHOLD):
-    """Return centroids of the beam profiles from the data dict.
-
-    Args:
-        datascan (dict): Nested dict containing the set of one full scan.
-        dev_motor (str): The device and motor being scanned
-            (e.g., 'mirror.rx').
-        droi (int): The half-size of the region around the centroid used to
-            determine if the beam is visible. Default is 4 pixels.
-        threshold (float): The minimum peak-to-average ratio required to
-            consider the beam visible. Default is 10.
-
-    Returns:
-        dict: A dict mapping scan numbers to (cx, cy) centroids.
-    """
-    # FWHM to sigma conversion factor.
-    f2sig = 2 * np.sqrt(2 * np.log(2))
-
-    # Calculate beam properties for all scans.
-    _, beam_propties = beam_properties(datascan, dev_motor, droi, threshold)
-
-    scans, xvals, centrs, sigmas  = [], [], [], []
-    for sc, values in beam_propties.items():
-        scans.append(sc)
-        xvals.append(values[0])
-        centrs.append(values[1])
-
-        # Estimate sigma from FWHM for a Gaussian profile.
-        fwhms = values[2]
-        sigmas.append(fwhms / f2sig)
-
-    return (np.array(scans), np.array(xvals),
-            np.array(centrs), np.array(sigmas))
-
-
-def beam_fwhm(datascan, dev_motor, droi=4, threshold=THRESHOLD):
-    """Return fwhm of the beam profiles from the data dict.
-
-    Args:
-        datascan (dict): Nested dict containing the set of one full scan
-            (one pass).
-        dev_motor (str): The device and motor being scanned (e.g., 'sample.x').
-        droi (int): The half-size of the region around the centroid used to
-            determine if the beam is visible. Default is 4 pixels.
-        threshold (float): The minimum peak-to-average ratio required to
-            consider the beam visible. Default is 10.
-
-    Returns:
-        fwhms (dict): A dict mapping scan numbers to (fx, fy) fwhm's.
-    """
-    fwhms = {}
-    _, beam_propties = beam_properties(datascan, dev_motor, droi, threshold)
-
-    for sc in beam_propties.keys():
-        xval   = beam_propties[sc][0]
-        fx, fy = beam_propties[sc][2]
-
-        fwhms[sc] = [xval, [fx, fy]]
-
-    return fwhms
-
-
-def beam_intensity(datascan, dev_motor, droi=4, threshold=THRESHOLD):
-    """Return the total intensity of the beam profiles from the data dict.
-
-    Args:
-        datascan (dict): Nested dict containing the set of one full scan
-            (one pass).
-        dev_motor (str): The device and motor being scanned (e.g., 'sample.x').
-        droi (int): The half-size of the region around the centroid used to
-            determine if the beam is visible. Default is 4 pixels.
-        threshold (float): The minimum peak-to-average ratio required to
-            consider the beam visible. Default is 10.
-
-    Returns:
-        dict: A dict mapping scan numbers to total intensity.
-    """
-    beam_images, beam_propties = beam_properties(datascan, dev_motor,
-                                                 droi, threshold)
-    exptime = datascan['scan-0000']['dvf_B1']['attrs']['expo_time']
-
-    intensities = {}
-    droi = 2
-    for sc in beam_images.keys():
-        img            = beam_images[sc]
-        xval           = beam_propties[sc][0]
-        cx, cy         = beam_propties[sc][1]
-        fwhm_x, fwhm_y = beam_propties[sc][2]
-
-        peak = np.mean(img[cy - droi : cy + droi + 1,
-                           cx - droi : cx + droi + 1])
-
-        mask = img > (peak / 2)
-        area_mask  = np.sum(mask)
-        img_masked = np.where(mask, img, 0)
-        area_img_masked = np.sum(img_masked)
-
-        intensity_by_mask = (area_img_masked / (area_mask * exptime)
-                             if area_mask != 0 else 0)
-
-        peak /= exptime
-        peak_fwhm_norm = (peak / (fwhm_x * fwhm_y)
-                          if fwhm_x * fwhm_y != 0 else 0)
-
-        intensities[sc] = [xval, [peak, intensity_by_mask, peak_fwhm_norm]]
-
-    return intensities
-
-
-
-
-
-def beam_visible(img, cx, cy, droi=4, threshold=THRESHOLD):
-    """Detect if a beam is present based on the peak-to-average ratio.
-
-    Args:
-        img (np.array): The 2D image array to analyze.
-        cx (int): The x-coordinate of the beam centroid.
-        cy (int): The y-coordinate of the beam centroid.
-        droi (int): The half-size of the region around the centroid used
-            to calculate the peak intensity. Default is 4 pixels.
-        threshold (float): The minimum peak-to-average ratio required to
-            consider the beam visible. Default is 10.
-
-    Returns:
-        bool: True if the beam is considered visible, False otherwise.
-    """
-    roi_avg = np.mean(img[cy-droi:cy+droi, cx-droi:cx+droi])
-    mean = np.mean(img)
-    ratio_rtom = roi_avg / mean if mean != 0 else 0
-
-    return ratio_rtom >= threshold
-
-
-#
-# Methods for reading HDF5 files and exporting to dictionary structure.
-#
-
-
-
-
-
-
-
-#
-# Functions to extract device (motor) and observable values across scans.
-#
-
-
-
-#
-# Variable behavior and statistical analysis.
-#
-
-
-
-
-
-def observable_statistics(data, observable):
-    """Calculate statistics of an observable across scans in a dataset.
-
-    Args:
-        data (dict): Nested dict containing the set of all passes.
-        observable (str): The variable to analyze (e.g., 'photocollector',
-            'centroid').
-        droi (int): The half-size of the region around the centroid used to
-            determine if the beam is visible. Default is 4 pixels.
-        threshold (float): The minimum peak-to-average ratio required to
-            consider the beam visible. Default is 10.
-
-    Returns:
-        dict: A dict mapping dataset keys to statistics of the observable,
-            including mean, median, and standard deviation.
-    """
-    yscans = []
-    for dataset in data.values():
-        (motor, scans,
-         xvals, yvals, sigmas) = observable_data(dataset, observable)
-        yscans.append(yvals)
-
-    # Calculate statistics for each dataset.
-    yscans = np.array(yscans)
-    yavg   = np.mean(yscans, axis=0)
-    ymed   = np.median(yscans, axis=0)
-    ystd   = np.std(yscans, axis=0)
-
-    stats = {
-        'xval'    : xvals,
-        'mean'    : yavg,
-        'median'  : ymed,
-        'std_dev' : ystd
-    }
-    return stats
-
-
-#
-# Correlation analysis functions.
-#
-
-def correlate(a, b):
-    """Calculate the normalized cross-correlation between two 1D arrays."""
-    a = a - np.mean(a)
-    b = b - np.mean(b)
-    norm = np.std(a) * np.std(b) * len(a)
-    return np.correlate(a, b, mode='full') / norm
-
-
-#
-# Plotting functions.
+# ==================================================
+#              Plotting functions
+# ==================================================
+# Plotting functions are organized by scope:
+# - Scan-level animations: centroid_plot, fwhm_plot
+# - Dataset-level plots: centroid_x_delta_plot, dataset_plot, plot_double_observable, scan_plot
+# - Utility helpers: (none at this time)
 #
 
 def centroid_plot(data, scanpass, wdir='.', save_fmt='gif'):
