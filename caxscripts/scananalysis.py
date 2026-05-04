@@ -342,7 +342,7 @@ def beam_from_scan(scandata, dev_motor, droi=4, analysis_mode='qck'):
         xval = float(_get_variable_metadata(data, dev_motor)[0])
 
         # Get image data and calculate centroid.
-        img = data['dvf_B1']['data'].T
+        img = data['dvf_B1']['data']
         img_xedges = np.arange(img.shape[0]+1)
         img_yedges = np.arange(img.shape[1]+1)
 
@@ -398,7 +398,7 @@ def beam_centroid(datascan, dev_motor, droi=4, analysis_mode='qck', threshold=TH
         xvals.append(values[0])
         
         ana = values[1]
-        hprm = getattr(ana, f"bprm_{analysis_mode}")
+        hprm = getattr(ana, f"hprm_{analysis_mode}")
         
         centrs.append([hprm['mux'], hprm['muy']])
 
@@ -430,7 +430,7 @@ def beam_fwhm(datascan, dev_motor, droi=4, analysis_mode='qck', threshold=THRESH
         xval   = beam_instances[st][0]
         
         ana = beam_instances[st][1]
-        hprm = getattr(ana, f"bprm_{analysis_mode}")
+        hprm = getattr(ana, f"hprm_{analysis_mode}")
         fx, fy = hprm['fwhmx'], hprm['fwhmy']
 
         fwhms[st] = [xval, [fx, fy]]
@@ -462,7 +462,7 @@ def beam_intensity(datascan, dev_motor, droi=4, analysis_mode='qck', threshold=T
     for sc in beam_instances.keys():
         xval = beam_instances[sc][0]
         ana  = beam_instances[sc][1]
-        hprm = getattr(ana, f"bprm_{analysis_mode}")
+        hprm = getattr(ana, f"hprm_{analysis_mode}")
 
         img            = ana.img
         cx, cy         = hprm['mux'], hprm['muy']
@@ -545,13 +545,13 @@ def centroid_plot(data, scanpass, wdir='.', save_fmt='gif'):
             ('gif', 'mp4', or '' to skip saving).
     """
     # Use the existing function to get motor, positions and centroids.
-    (motor, scan_nums, xval,
-     (cx_all, cy_all)) = observable_data(data, 'centroid')
+    (motor, steps, xval,
+     (cx_all, cy_all), _) = observable_data(data, 'centroid')
 
     # Retrieve images in the same order as scan_nums.
     images = [(f'scan-{sc:04d}',
                data[f'scan-{sc:04d}']['dvf_B1']['data'])
-               for sc in scan_nums]
+               for sc in steps]
 
     fig, (ax_img, ax_cx, ax_cy) = plt.subplots(1, 3, figsize=(24, 5))
 
