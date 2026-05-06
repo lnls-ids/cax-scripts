@@ -10,27 +10,38 @@ from caxscripts import utils
 from caxscripts.h5file import HDF5File
 from siriuspy.devices import CAXCtrl
 import caxscripts.motormov as mtv
-import sys
+# import sys
 
 
 # Scan types:
 # key = user choice;
 # list : menu description, PV name, device name, class name.
 SCAN_TYPES = {
-    '1' : ['Mirror x translation (Tx)',         'tx',       'mirror',  'CAXMirrorMove'],
-    '2' : ['Mirror x rotation    (Rx)',         'cs_rx',    'mirror',  'CAXMirrorMove'],
-    '3' : ['Mirror y translation (Ty)',         'cs_ty',    'mirror',  'CAXMirrorMove'],
-    '4' : ['Mirror y rotation    (Ry)',         'ry',       'mirror',  'CAXMirrorMove'],
-    '5' : ['Mirror z rotation    (Rz)',         'cs_rz',    'mirror',  'CAXMirrorMove'],
-    '6' : ['Caustic',                           'z_pos',    'dvf_B1',  'CAXCausticMove'],
-    '7' : ['Lens (DVF2) translation',           'lens_pos', 'lens',    'CAXLensMove'],
-    '8' : ['Slit set 1 window (before mirror)', 'slit_A1',  'slit_A1', 'CAXSlitMove'],
-    '9' : ['Slit set 2 window (after mirror)',  'slit_B1',  'slit_B1', 'CAXSlitMove'],
+    '1' : ['Mirror x translation (Tx)',         'tx',       'mirror',
+           'CAXMirrorMove'],
+    '2' : ['Mirror x rotation    (Rx)',         'cs_rx',    'mirror',
+           'CAXMirrorMove'],
+    '3' : ['Mirror y translation (Ty)',         'cs_ty',    'mirror',
+           'CAXMirrorMove'],
+    '4' : ['Mirror y rotation    (Ry)',         'ry',       'mirror',
+           'CAXMirrorMove'],
+    '5' : ['Mirror z rotation    (Rz)',         'cs_rz',    'mirror',
+           'CAXMirrorMove'],
+    '6' : ['Caustic',                           'z_pos',    'dvf_B1',
+           'CAXCausticMove'],
+    '7' : ['Lens (DVF2) translation',           'lens_pos', 'lens',
+           'CAXLensMove'],
+    '8' : ['Slit set 1 window (before mirror)', 'slit_A1',  'slit_A1',
+           'CAXSlitMove'],
+    '9' : ['Slit set 2 window (after mirror)',  'slit_B1',  'slit_B1',
+           'CAXSlitMove'],
 }
 
 
-WSIZE_V = 467
-WSIZE_H = 178
+# The WSIZE_H/V values are used to convert pixel intervals observed by the DVF
+# into actual motor positions. They are determined by the geometry of the
+# YAG. Adjust these values if there are changes in the setup or calibration.
+WSIZE_V, WSIZE_H = 467, 178
 
 
 def scan_menu_select():
@@ -138,24 +149,34 @@ def _ask_val(prompt, limits):
 def _general_parameters_ask(motortype, limits):
     """Ask a question with multiple options and return the selected option."""
     scanargs = dict()
-    scanargs['start']  = _ask_val(f"Enter start {motortype} position/angle: ", limits)
-    scanargs['stop']   = _ask_val(f"Enter stop {motortype} position/angle: ", limits)
-    scanargs['nsteps'] = int(_ask_val("Enter number of steps for scanning: ",
-                                      limits=(1, float('inf'))))
-    scanargs['dtime']  = _ask_val("Enter dwell time at each position (s): ",
-                                  limits=(0, float('inf')))
+    scanargs['start']  = _ask_val(
+        f"Enter start {motortype} position/angle: ", limits
+        )
+    scanargs['stop']   = _ask_val(
+        f"Enter stop {motortype} position/angle: ", limits
+        )
+    scanargs['nsteps'] = int(_ask_val(
+        "Enter number of steps for scanning: ", limits=(1, float('inf'))
+        ))
+    scanargs['dtime']  = _ask_val(
+        "Enter dwell time at each position (s): ", limits=(0, float('inf'))
+        )
     return scanargs
+
 
 # The methods below convert pixel intervals observed by the DVF
 # into actual motor positions.
 def _top_pos_from_pixels(pixel):
     return -pixel * 0.01039 + 19.1
 
+
 def _bottom_pos_from_pixels(pixel):
     return (pixel - WSIZE_V) * 0.01041 + 37.4
 
+
 def _left_pos_from_pixels(pixel):
     return -pixel * 0.007126 + 44.3
+
 
 def _right_pos_from_pixels(pixel):
     return (pixel - WSIZE_H) * 0.007126 + 46.4
@@ -174,8 +195,10 @@ def slit_parameters_ask(scantype: str, cax_status: dict, cax: CAXCtrl):
     top, bottom, left, right = utils.image_show_slit_boundary(img)
 
     # Get relevant parameters for the slit device.
-    currval = { key : float(val[0])
-               for key, val in cax_status[devname].items() }
+    currval = {
+        key : float(val[0])
+        for key, val in cax_status[devname].items()
+        }
     print(f" ** Current {motortype} value:")
     for key, val in currval.items():
         print(f"  - {key}: {val:10.4f}")
@@ -185,7 +208,7 @@ def slit_parameters_ask(scantype: str, cax_status: dict, cax: CAXCtrl):
                   max(vals[1], vals[2]))
         print(f"\n ** {slit} slit limits:"
               f"   [{limits[0]:10.4f}, {limits[1]:10.4f}]")
-    
+
     hsize = np.abs(right - left)
     vsize = np.abs(top - bottom)
     print("\n * Current window size: "
@@ -212,22 +235,30 @@ def slit_parameters_ask(scantype: str, cax_status: dict, cax: CAXCtrl):
     xcenter_pos_pixels = np.array([
         win_x * (0.5 + i * (1 - superp)) for i in range(n_h_windows)
         ])
-    scanargs['left_pos']  = _left_pos_from_pixels(xcenter_pos_pixels - win_x / 2)
-    scanargs['right_pos'] = _right_pos_from_pixels(xcenter_pos_pixels + win_x / 2)
+    scanargs['left_pos']  = _left_pos_from_pixels(
+        xcenter_pos_pixels - win_x / 2
+        )
+    scanargs['right_pos'] = _right_pos_from_pixels(
+        xcenter_pos_pixels + win_x / 2
+        )
 
     win_y = (vsize / n_v_windows) * (1 + superp)
     ycenter_pos_pixels = np.array([
         win_y * (0.5 + i * (1 - superp)) for i in range(n_v_windows)
         ])
-    scanargs['bottom_pos'] = _bottom_pos_from_pixels(ycenter_pos_pixels + win_y / 2)
-    scanargs['top_pos']    = _top_pos_from_pixels(ycenter_pos_pixels - win_y / 2)
+    scanargs['bottom_pos'] = _bottom_pos_from_pixels(
+        ycenter_pos_pixels + win_y / 2
+        )
+    scanargs['top_pos']    = _top_pos_from_pixels(
+        ycenter_pos_pixels - win_y / 2
+        )
     #
     scanargs['winsize'] = (win_x, win_y)
 
     return device_mv, scanargs
 
 
-def parameters_ask(scantype: str, cax_status: dict, cax=None):
+def parameters_ask(scantype: str, cax_status: dict):
     """Get scan parameters from user."""
     motortype   = SCAN_TYPES[scantype][1]
     device      = SCAN_TYPES[scantype][2]
@@ -286,12 +317,14 @@ def main():
         if st == 'slit_A1' or st == 'slit_B1':
             dev, scanargs = slit_parameters_ask(choice, cax_status, cax)
         else:
-            scanargs  = parameters_ask(choice, cax_status, cax)
-            print(f"\n### Starting {SCAN_TYPES[choice]} scan with parameters:\n"
+            scanargs  = parameters_ask(choice, cax_status)
+            print(
+                f"\n### Starting {SCAN_TYPES[choice]} scan with parameters:\n"
                 f" start    : {scanargs['start']:15.4f} mm,\n"
                 f" stop     : {scanargs['stop']:15.4f} mm,\n"
                 f" in       : {scanargs['nsteps']:15} steps,\n"
-                f" interval : {scanargs['dtime']:15.4f} s\n")
+                f" interval : {scanargs['dtime']:15.4f} s\n"
+                )
 
             # Instantiate the device for the chosen scan type.
             dev = device_picker(choice, cax)
@@ -306,7 +339,6 @@ def main():
         # Run the scan for the device with the specified parameters.
         # Results can be accessed by dev.results after the scan.
         dev.device_scan(scanargs, h5file=h5file)
-
 
     print(f"\nData saved to {filename}.")
 

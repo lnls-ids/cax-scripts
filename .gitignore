@@ -182,3 +182,4 @@ test*
 tmp*
 caxscripts/tests.ipynb
 caxscripts/test*
+ruff.*

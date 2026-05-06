@@ -3,7 +3,6 @@
 
 class Config:
     """Configuration parameters and constants for Carcara scripts."""
-
     # dvf
     SCALE = 1     # [um/px]
     MAXERRORCOUNT = 3

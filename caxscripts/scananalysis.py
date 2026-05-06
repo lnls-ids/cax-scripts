@@ -96,10 +96,12 @@ THRESHOLD = 100
 #                    Utilities 
 # ==================================================
 
+
 def files_in_directory(wdir, pattern):
     """List files in a directory matching a regex pattern."""
     rawfiles = os.listdir(wdir)
     return sorted([f"{wdir}/{f}" for f in rawfiles if re.match(pattern, f)])
+
 
 def h5_to_dict(filename):
     """Read an HDF5 file into a nested dict.
@@ -132,6 +134,7 @@ def correlate(a, b):
     norm = np.std(a) * np.std(b) * len(a)
     return np.correlate(a, b, mode='full') / norm
 
+
 # ==================================================
 #           Dataset level (multiple passes)
 # ==================================================
@@ -145,12 +148,14 @@ def dataset_from_h5_files(files):
         dataset[key] = h5_to_dict(filename)
     return dataset
 
+
 def _get_dev_val(dataset, nscan, dev):
     """Helper function to extract a device value from the dataset."""
     val = dataset[nscan]['attrs'].get(dev)
     if isinstance(val, (np.ndarray, list)):
         val = val[0]
     return val
+
 
 # Not used at the moment?
 def get_scan_data(dataset, variable, observable):
@@ -173,6 +178,7 @@ def get_scan_data(dataset, variable, observable):
 
     return scandata
 
+
 #
 # Variable behavior and statistical analysis.
 #
@@ -185,8 +191,6 @@ def observable_statistics(dataset, observable):
             'centroid').
         droi (int): The half-size of the region around the centroid used to
             determine if the beam is visible. Default is 4 pixels.
-        threshold (float): The minimum peak-to-average ratio required to
-            consider the beam visible. Default is 10.
 
     Returns:
         dict: A dict mapping dataset keys to statistics of the observable,
@@ -212,6 +216,7 @@ def observable_statistics(dataset, observable):
     }
     return stats
 
+
 # ==================================================
 #           Scan level (one full scan)
 # ==================================================
@@ -222,7 +227,7 @@ def observable_data(scandata, observable):
     Args:
         scandata (dict): Nested dict containing the set of
                          one full scan (one pass).
-        observable (str): The variable to extract (e.g., 
+        observable (str): The variable to extract (e.g.,
                           'photocollector', 'centroid').
 
     Returns:
@@ -306,26 +311,25 @@ def observable_data(scandata, observable):
     return motor, np.array(steps), np.array(xval), [np.array(yval)], None
 
 
-
 #
 # Beam properties extraction methods and analysis.
 #
 def beam_from_scan(scandata, dev_motor, droi=4, analysis_mode='qck'):
     """Return properties of the beam profiles from the datascan dict.
-    Operates on a full scan, linking scanned variable value to beam 
+
+    Operates on a full scan, linking scanned variable value to beam
     images and properties. Utilizes the `Histogram2DAnalyzer` class
-    from the `image_statistics` module.  
+    from the `image_statistics` module.
 
     Args:
         scandata (dict): Nested dict containing the set of one full scan.
         dev_motor (str): The device and motor being scanned (e.g., 'sample.x').
         droi (int): The half-size of the region around the centroid used to
             determine if the beam is visible. Default is 4 pixels.
-        analysis_mode (str): what method to use for analyzing image properties, 
-            'qck' for quick analysis, 'mom' for analysis through moments calculation 
-            and 'fit' for non-linear gaussian fitting. Defaults to 'qck'. 
-        threshold (float): The minimum peak-to-average ratio required to
-            consider the beam visible. Default is 100.
+        analysis_mode (str): what method to use for analyzing image properties,
+            'qck' for quick analysis, 'mom' for analysis through moments
+            calculation and 'fit' for non-linear gaussian fitting. Defaults
+            to 'qck'.
 
     Returns:
         beam_instances (dict): A dict mapping step numbers to H2DA instances
@@ -346,16 +350,16 @@ def beam_from_scan(scandata, dev_motor, droi=4, analysis_mode='qck'):
         img_xedges = np.arange(img.shape[0]+1)
         img_yedges = np.arange(img.shape[1]+1)
 
-        ana = Histogram2DAnalyzer(img, 
+        ana = Histogram2DAnalyzer(img,
                                   xedges=img_xedges,
                                   yedges=img_yedges,
                                   droi=droi)
-        
+
         if not ana.beam_visible:
             continue
 
-        # Perform the analysis to extract beam properties based on the 
-        # specified mode. Quick analysis is always perfomed 
+        # Perform the analysis to extract beam properties based on the
+        # specified mode. Quick analysis is always perfomed
         ana.analyze(analysis_mode)
 
         # Return a dict linking scanned variable value to a H2DA
@@ -363,14 +367,15 @@ def beam_from_scan(scandata, dev_motor, droi=4, analysis_mode='qck'):
         beam_instances[st] = [xval, ana]
 
         # Right now, as 'qck' is set as the default analysis mode, the
-        # behaviour is the exact same as was previously implemented, 
+        # behaviour is the exact same as was previously implemented,
         # justifying the deletion of the old code. For moment and fitting
         # calculation, it remains to define the use of a ROI and to handle
         # thresholding adequately.
 
     return beam_instances
 
-def beam_centroid(datascan, dev_motor, droi=4, analysis_mode='qck', threshold=THRESHOLD):
+
+def beam_centroid(datascan, dev_motor, droi=4, analysis_mode='qck'):
     """Return centroids of the beam profiles from the data dict.
 
     Args:
@@ -380,15 +385,10 @@ def beam_centroid(datascan, dev_motor, droi=4, analysis_mode='qck', threshold=TH
         droi (int): The half-size of the region around the centroid used to
             determine if the beam is visible. Default is 4 pixels.
         analysis_mode (str): The mode of analysis to use. Default is 'qck'.
-        threshold (float): The minimum peak-to-average ratio required to
-            consider the beam visible. Default is 100.
 
     Returns:
         dict: A dict mapping scan numbers to (cx, cy) centroids.
     """
-    # FWHM to sigma conversion factor.
-    f2sig = 2 * np.sqrt(2 * np.log(2))
-
     # Calculate beam properties for all scans.
     beam_instances = beam_from_scan(datascan, dev_motor, droi, analysis_mode)
 
@@ -396,10 +396,10 @@ def beam_centroid(datascan, dev_motor, droi=4, analysis_mode='qck', threshold=TH
     for st, values in beam_instances.items():
         steps.append(st)
         xvals.append(values[0])
-        
+
         ana = values[1]
         hprm = getattr(ana, f"hprm_{analysis_mode}")
-        
+
         centrs.append([hprm['mux'], hprm['muy']])
 
         sigmas.append([hprm['sigx'], hprm['sigy']])
@@ -407,7 +407,8 @@ def beam_centroid(datascan, dev_motor, droi=4, analysis_mode='qck', threshold=TH
     return (np.array(steps), np.array(xvals),
             np.array(centrs), np.array(sigmas))
 
-def beam_fwhm(datascan, dev_motor, droi=4, analysis_mode='qck', threshold=THRESHOLD):
+
+def beam_fwhm(datascan, dev_motor, droi=4, analysis_mode='qck'):
     """Return fwhm of the beam profiles from the data dict.
 
     Args:
@@ -417,8 +418,6 @@ def beam_fwhm(datascan, dev_motor, droi=4, analysis_mode='qck', threshold=THRESH
         droi (int): The half-size of the region around the centroid used to
             determine if the beam is visible. Default is 4 pixels.
         analysis_mode (str): The mode of analysis to use. Default is 'qck'.
-        threshold (float): The minimum peak-to-average ratio required to
-            consider the beam visible. Default is 10.
 
     Returns:
         fwhms (dict): A dict mapping scan numbers to (fx, fy) fwhm's.
@@ -428,7 +427,7 @@ def beam_fwhm(datascan, dev_motor, droi=4, analysis_mode='qck', threshold=THRESH
 
     for st in beam_instances.keys():
         xval   = beam_instances[st][0]
-        
+
         ana = beam_instances[st][1]
         hprm = getattr(ana, f"hprm_{analysis_mode}")
         fx, fy = hprm['fwhmx'], hprm['fwhmy']
@@ -437,7 +436,8 @@ def beam_fwhm(datascan, dev_motor, droi=4, analysis_mode='qck', threshold=THRESH
 
     return fwhms
 
-def beam_intensity(datascan, dev_motor, droi=4, analysis_mode='qck', threshold=THRESHOLD):
+
+def beam_intensity(datascan, dev_motor, droi=4, analysis_mode='qck'):
     """Return the total intensity of the beam profiles from the data dict.
 
     Args:
@@ -447,8 +447,6 @@ def beam_intensity(datascan, dev_motor, droi=4, analysis_mode='qck', threshold=T
         droi (int): The half-size of the region around the centroid used to
             determine if the beam is visible. Default is 4 pixels.
         analysis_mode (str): The mode of analysis to use. Default is 'qck'.
-        threshold (float): The minimum peak-to-average ratio required to
-            consider the beam visible. Default is 10.
 
     Returns:
         dict: A dict mapping scan numbers to total intensity.
@@ -486,6 +484,8 @@ def beam_intensity(datascan, dev_motor, droi=4, analysis_mode='qck', threshold=T
         intensities[sc] = [xval, [peak, intensity_by_mask, peak_fwhm_norm]]
 
     return intensities
+
+
 # ==================================================
 #           Data level (one scan step)
 # ==================================================
@@ -527,7 +527,8 @@ def _get_variable_metadata(data, dev_motor):
 # ==================================================
 # Plotting functions are organized by scope:
 # - Scan-level animations: centroid_plot, fwhm_plot
-# - Dataset-level plots: centroid_x_delta_plot, dataset_plot, plot_double_observable, scan_plot
+# - Dataset-level plots: centroid_x_delta_plot, dataset_plot,
+#   plot_double_observable, scan_plot
 # - Utility helpers: (none at this time)
 #
 
