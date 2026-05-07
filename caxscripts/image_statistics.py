@@ -101,6 +101,8 @@ class Histogram2DAnalyzer:
         self.img               = np.asarray(img,    dtype=float)
         self.xedges            = np.asarray(xedges, dtype=float)
         self.yedges            = np.asarray(yedges, dtype=float)
+        self.xcenters          = 0.5 * (self.xedges[:-1] + self.xedges[1:])
+        self.ycenters          = 0.5 * (self.yedges[:-1] + self.yedges[1:])
         self.droi              = droi
         self.beam_visible      = None  # set by compute_quick()
         self.hprm_qck          = None  # quick params: cx, cy, fwhm_x, fwhm_y, sig_x, sig_y
@@ -117,48 +119,61 @@ class Histogram2DAnalyzer:
     # Quick analysis block (run on init).
     # ------------------------------------------------------------------
 
-    def _compute_beam_visibility(self, cx, cy):
+    def _compute_beam_visibility(self, cx, cy, img=None):
         """Compute whether the beam is visible based on peak-to-average ratio.
 
         Args:
             cx: x-coordinate of the beam centroid.
             cy: y-coordinate of the beam centroid.
+            img: optional array to analyze instead of self.img
 
         Returns:
             bool: True if the beam is considered visible.
         """
+        img = self.img if img is None else np.asarray(img, dtype=float)
         roi_avg = np.mean(
-            self.img[cy - self.droi:cy + self.droi,
-                   cx - self.droi:cx + self.droi]
+                 img[cx - self.droi:cx + self.droi, 
+                     cy - self.droi:cy + self.droi]
         )
-        mean = np.mean(self.img)
+        mean = np.mean(img)
         ratio = roi_avg / mean if mean != 0 else 0
         return ratio >= PEAK2AVG_THRESHOLD
 
-    def _qck_centroid(self):
+    def _qck_centroid(self, img=None):
         """Calculate beam centroid via smoothed projected sums.
 
+        Parameters:
+            img: optional array to analyze instead of self.img
+                (e.g. self.img_thresholded).
+        
         Returns:
             np.array: [cx, cy] centroid coordinates.
         """
-        cx_sum = np.sum(self.img, axis=0)
-        cy_sum = np.sum(self.img, axis=1)
+        img = self.img if img is None else np.asarray(img, dtype=float)
+        # image is being transposed before being attributed to the class 
+        # then, its shape is (nx, ny) and the x projection is along axis=1, 
+        # while the y projection along axis=0
+        cx_sum = np.sum(img, axis=1)
+        cy_sum = np.sum(img, axis=0)
         xsmooth = savgol_filter(cx_sum, window_length=21, polyorder=2)
         ysmooth = savgol_filter(cy_sum, window_length=21, polyorder=2)
         return np.array([np.argmax(xsmooth), np.argmax(ysmooth)])
 
-    def _qck_fwhm(self, cx, cy):
+    def _qck_fwhm(self, cx, cy, img=None):
         """Calculate beam FWHM via half-max threshold.
 
         Args:
             cx: x-coordinate of the beam centroid.
             cy: y-coordinate of the beam centroid.
+            img: optional array to analyze instead of self.img
+                (e.g. self.img_thresholded).
 
         Returns:
             np.array: [fwhm_x, fwhm_y] in pixels.
         """
-        x_profile = self.img[cy, :]
-        y_profile = self.img[:, cx]
+        img = self.img if img is None else np.asarray(img, dtype=float)
+        x_profile = img[:, cy]
+        y_profile = img[cx, :]
         fwhm_x = np.sum(x_profile > (x_profile.max() / 2))
         fwhm_y = np.sum(y_profile > (y_profile.max() / 2))
         return np.array([fwhm_x, fwhm_y])
@@ -187,32 +202,68 @@ class Histogram2DAnalyzer:
         """
         return fwhm / FWHM2SIG
 
-    def compute_quick(self):
+    @staticmethod
+    def adjust_angle(theta):
+        """Adjust angle to be within [-pi, pi].
+
+        Args:
+            theta: angle in radians.
+
+        Returns:
+            Adjusted angle in radians.
+        """
+        theta_wrapped = (theta + np.pi) % (2 * np.pi)
+        if theta_wrapped > np.pi:
+            theta_wrapped -= 2 * np.pi
+        return theta_wrapped
+
+    def compute_quick(self, img=None):
         """Compute quick beam parameters automatically on init.
 
         Sets self.beam_visible and self.hprm_qck if beam is visible.
+        
+        Parameters:
+            img: optional array to analyze instead of self.img
+                (e.g. self.img_thresholded).
 
         Returns:
             dict or None: hprm_qck if visible, None otherwise.
         """
-        cx, cy = self._qck_centroid()
-        self.beam_visible = self._compute_beam_visibility(cx, cy)
+        img = self.img if img is None else np.asarray(img, dtype=float)
+        if img.ndim != 2:
+            raise ValueError("img must be a 2D array.")
+        nx, ny = img.shape
+        if self.xedges.size != nx + 1:
+            raise ValueError("xedges length must be img.shape[0] + 1.")
+        if self.yedges.size != ny + 1:
+            raise ValueError("yedges length must be img.shape[1] + 1.")
+        
+        cx, cy = self._qck_centroid(img=img)
+        self.beam_visible = self._compute_beam_visibility(cx, cy, img=img)
 
         if not self.beam_visible:
             import warnings
             warnings.warn("Beam not visible; skipping quick analysis.")
             return None
 
-        fwhms = self._qck_fwhm(cx, cy)
+        fwhms = self._qck_fwhm(cx, cy, img=img)
         sigx = self.fwhm_to_sigma(fwhms[0])
         sigy = self.fwhm_to_sigma(fwhms[1])
         self.hprm_qck = {
-            'mux': cx,
-            'muy': cy,
-            'fwhmx': fwhms[0],
-            'fwhmy': fwhms[1],
-            'sigx': sigx,
-            'sigy': sigy,
+            "mux"       : cx,
+            "muy"       : cy,
+            "sigx"      : sigx,
+            "sigy"      : sigy,
+            "fwhmx"     : fwhms[0],
+            "fwhmy"     : fwhms[1],
+            "cov"       : np.diag([sigx**2, sigy**2]),  # no covariance in quick estimate
+            "sig_major" : max(sigx, sigy),
+            "sig_minor" : min(sigx, sigy),
+            "theta"     : 0.5*np.pi*float(sigx<sigy),  # ellipse aligned to axes
+            "evecs"     : np.array([[1, 0], [0, 1]]),  # identity for quick estimate
+            "xcenters"  : self.xcenters, 
+            "ycenters"  : self.ycenters,
+
         }
         return self.hprm_qck
 
@@ -473,23 +524,20 @@ class Histogram2DAnalyzer:
 
     def _bin_centers(self):
         """Return (xcenters, ycenters) computed from the stored edges."""
-        xcenters = 0.5 * (self.xedges[:-1] + self.xedges[1:])
-        ycenters = 0.5 * (self.yedges[:-1] + self.yedges[1:])
-        return xcenters, ycenters
+        self.xcenters = 0.5 * (self.xedges[:-1] + self.xedges[1:])
+        self.ycenters = 0.5 * (self.yedges[:-1] + self.yedges[1:])
+        return self.xcenters, self.ycenters
 
-    def _covariance_from_moments(self, weight, xcenters, ycenters):
+    def _covariance_from_moments(self, weight):
         """Compute the 2x2 covariance matrix from weighted bin-center moments.
 
         Arguments:
             weight: 2D weight array (same shape as the histogram).
-            xcenters: 1D array of x bin centers.
-            ycenters: 1D array of y bin centers.
-
         Returns:
             covmat: 2x2 covariance matrix.
             (mux, muy): means.
         """
-        xg, yg = np.meshgrid(xcenters, ycenters, indexing="ij")
+        xg, yg = np.meshgrid(self.xcenters, self.ycenters, indexing="ij")
         wsum = weight.sum()
         if wsum <= 0:
             raise ValueError("Total weight must be positive.")
@@ -607,10 +655,7 @@ class Histogram2DAnalyzer:
         if self.yedges.size != ny + 1:
             raise ValueError("yedges length must be img.shape[1] + 1.")
 
-        xcenters, ycenters = self._bin_centers()
-        covmat, (mux, muy) = self._covariance_from_moments(
-            img, xcenters, ycenters
-        )
+        covmat, (mux, muy) = self._covariance_from_moments(img)
         sigx = np.sqrt(covmat[0, 0])
         sigy = np.sqrt(covmat[1, 1])
         sig_major, sig_minor, theta, evecs = self._ellipse_params_from_cov(
@@ -618,13 +663,19 @@ class Histogram2DAnalyzer:
         )
 
         self.hprm_mom = {
-            "mux": mux, "muy": muy,
-            "cov": covmat,
-            "sigx": sigx, "sigy": sigy,
-            "fwhmx": self.sigma_to_fwhm(sigx), "fwhmy": self.sigma_to_fwhm(sigy),
-            "sig_major": sig_major, "sig_minor": sig_minor,
-            "theta": theta, "evecs": evecs,
-            "xcenters": xcenters, "ycenters": ycenters,
+            "mux"       : mux, 
+            "muy"       : muy,
+            "cov"       : covmat,
+            "sigx"      : sigx, 
+            "sigy"      : sigy,
+            "fwhmx"     : self.sigma_to_fwhm(sigx), 
+            "fwhmy"     : self.sigma_to_fwhm(sigy),
+            "sig_major" : sig_major, 
+            "sig_minor" : sig_minor,
+            "theta"     : self.adjust_angle(theta), 
+            "evecs"     : evecs,
+            "xcenters"  : self.xcenters, 
+            "ycenters"  : self.ycenters,
         }
         return self.hprm_mom
 
@@ -652,13 +703,12 @@ class Histogram2DAnalyzer:
         if img is None:
             img = self.img
 
-        xcenters = hprm["xcenters"]
-        ycenters = hprm["ycenters"]
-        xg, yg = np.meshgrid(xcenters, ycenters, indexing="ij")
+
+        xg, yg = np.meshgrid(self.xcenters, self.ycenters, indexing="ij")
 
         # Normalize to PDF so amplitude matches the normalized Gaussian.
-        dx = xcenters[1] - xcenters[0]
-        dy = ycenters[1] - ycenters[0]
+        dx = self.xcenters[1] - self.xcenters[0]
+        dy = self.ycenters[1] - self.ycenters[0]
         img_norm = img / (img.sum() * dx * dy)
 
         # Fit to ROI.
@@ -702,10 +752,10 @@ class Histogram2DAnalyzer:
             "cov"       : covmat,
             "sig_major" : sig_major,
             "sig_minor" : sig_minor,
-            "theta"     : theta,
+            "theta"     : self.adjust_angle(theta),
             "evecs"     : evecs,
-            "xcenters"  : xcenters,
-            "ycenters"  : ycenters,
+            "xcenters"  : self.xcenters,
+            "ycenters"  : self.ycenters,
         }
         return self.hprm_fit
 
@@ -731,7 +781,9 @@ class Histogram2DAnalyzer:
         thr = thrs[np.argmax(entropies)]
 
         self.optimal_threshold = thr
-        self.img_thresholded = np.where(self.img > thr, self.img, 0.0)
+        self.img_thresholded = np.where(self.img > thr, 
+                                        self.img - self.optimal_threshold, 
+                                        0.0)
         return entropies, bin_edges, thr, nbins
 
     def print_stats(self, hprm=None):
@@ -833,7 +885,7 @@ class Histogram2DAnalyzer:
                 (hprm["mux"], hprm["muy"]),
                 width=2 * n * hprm["sig_major"],
                 height=2 * n * hprm["sig_minor"],
-                angle=hprm["theta"] * 180 / np.pi,
+                angle=np.rad2deg(hprm["theta"]),
                 fill=False, lw=2, color=color, label=f"{n}sigma",
             )
             ax.add_patch(ell)
