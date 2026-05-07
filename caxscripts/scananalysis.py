@@ -10,67 +10,68 @@ beam profiles and their variation with respect to the scanned variable
 Data Levels:
 The analysis operates at three hierarchical data levels:
 - data:     A single scan step, containing raw image data and metadata
-            for that step (e.g., one DVF image and motor position).
+        for that step (e.g., one DVF image and motor position).
 - scan:     A full scan (one pass), composed of multiple 'data' steps
-            (e.g., all steps from one HDF5 file).
+        (e.g., all steps from one HDF5 file).
 - dataset:  Multiple scan passes of the same type, containing multiple
-            'scandata' dicts (e.g., all HDF5 files from repeated scans).
+        'scandata' dicts (e.g., all HDF5 files from repeated scans).
 
 Function Categories (matching module section structure):
 
 Scan parameter extraction methods:
 - _get_variable_metadata: Extract scanned variable metadata from a single
-                          data step [data level].
+        data step (data level).
 
 Beam properties extraction methods and analysis:
-- beam_from_scan:   Extract beam properties from all steps in a scan
-                     [scandata level].
-- beam_centroid:     Return centroids for all steps in a scan [scandata level;
-                    wraps beam_from_scan].
-- beam_fwhm:         Return FWHMs for all steps in a scan [scandata level;
-                    wraps beam_from_scan].
-- beam_intensity:    Return total intensity for all steps in a scan [scandata level;
-                    wraps beam_from_scan].
+- beam_from_scan: Extract beam properties from all steps in a scan
+        (scandata level).
+- beam_centroid:  Return centroids for all steps in a scan (scandata level;
+        wraps beam_from_scan).
+- beam_fwhm:      Return FWHMs for all steps in a scan (scandata level; wraps
+        beam_from_scan).
+- beam_intensity: Return total intensity for all steps in a scan
+        (scandata level; wraps beam_from_scan).
 
 Methods for reading HDF5 files and exporting to dictionary structure:
 - files_in_directory: List files in a directory matching a regex pattern
-                      [utility, no scan data input].
-- h5_to_dict:        Read a single HDF5 file into a scandata dict [scandata level].
+                      (utility, no scan data input).
+- h5_to_dict:        Read a single HDF5 file into a scandata dict
+        (scandata level).
 - dataset_from_h5_files: Aggregate multiple HDF5 files into a dataset dict
-                          [dataset level].
+        (dataset level).
 
 Functions to extract device (motor) and observable values across scans:
 - _get_dev_val:      Helper to extract device values from a scandata step
-                    [scandata level].
+        (scandata level).
 - get_scan_data:     Extract observable and variable values across all
-                    dataset passes [dataset level].
+        dataset passes (dataset level).
 
 Variable behavior and statistical analysis:
 - observable_data:        Extract observable behavior across steps in a single
-                          scan [scandata level].
+        scan (scandata level).
 - observable_statistics:   Calculate mean/median/std of an observable across
-                          dataset passes [dataset level].
+        dataset passes (dataset level).
 
 Correlation analysis functions:
 - correlate: Calculate normalized cross-correlation between two 1D arrays
-             [utility, generic math].
+        (utility, generic math).
 
 Plotting functions (see dedicated section below):
-- dataset_plot:           Plot observable trace for a single scandata [scandata level].
-- centroid_plot:          Animate beam images and centroids for a scan pass
-                          [scandata level].
-- fwhm_plot:              Animate beam images and FWHMs for a scan pass
-                          [scandata level].
+- dataset_plot:  Plot observable trace for a single scandata (scandata level).
+- centroid_plot: Animate beam images and centroids for a scan pass
+        (scandata level).
+- fwhm_plot:     Animate beam images and FWHMs for a scan pass
+        (scandata level).
+- scan_plot:     Main entry point to plot all observables across dataset
+        passes (dataset level).
 - centroid_x_delta_plot:  Plot motor/centroid changes across dataset passes
-                           [dataset level].
-- plot_double_observable:  Plot two-component observables across passes
-                          [dataset level; helper].
-- scan_plot:              Main entry point to plot all observables across
-                          dataset passes [dataset level].
+        (dataset level).
+- plot_double_observable: Plot two-component observables across passes
+        (dataset level; helper).
 
 Legacy code (to be checked):
 - caustic_analysis: Perform caustic analysis on a single HDF5 file
-                     [scandata level].
+        (scandata level).
 """
 import h5py
 import numpy as np
@@ -83,7 +84,7 @@ import matplotlib.pyplot as plt
 from IPython.display import HTML
 from IPython.display import display as ipydisplay
 
-from scipy.signal import savgol_filter
+# from scipy.signal import savgol_filter
 from scipy.optimize import curve_fit
 from . import utils
 
@@ -92,10 +93,10 @@ from caxscripts.image_statistics import Histogram2DAnalyzer
 # Threshold for peak-to-average ratio acceptance of image.
 THRESHOLD = 100
 
-# ==================================================
-#                    Utilities 
-# ==================================================
 
+# ==================================================
+#                    Utilities
+# ==================================================
 
 def files_in_directory(wdir, pattern):
     """List files in a directory matching a regex pattern."""
