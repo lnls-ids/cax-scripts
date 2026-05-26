@@ -1,8 +1,12 @@
 """Parameters and constants for Carcara scripts."""
 
+from siriuspy.devices import CAXCtrl
 
 class Config:
     """Configuration parameters and constants for Carcara scripts."""
+    
+    cax = CAXCtrl()
+    
     # dvf
     SCALE = 1     # [um/px]
     MAXERRORCOUNT = 3
@@ -71,3 +75,21 @@ class Config:
         'LEFT'   : 47.5,
         'RIGHT'  : 46.5,
     }
+
+    PVFLUX = [
+    cax.mirror.PVS.FLOWMETER1_MON,
+    cax.mirror.PVS.FLOWMETER2_MON,
+    ]
+
+    PVTEMP = [
+        cax.mirror.PVS.TEMP0_MON,
+        cax.mirror.PVS.TEMP1_MON,
+        cax.mirror.PVS.TEMP2_MON,
+        cax.mirror.PVS.TEMP3_MON,
+        cax.mirror.PVS.TEMP4_MON,
+        ]
+
+    PVPRESS = [
+        cax.mirror.PVS.PR_Q1_MON,
+        cax.mirror.PVS.PR_A1_MON
+        ]

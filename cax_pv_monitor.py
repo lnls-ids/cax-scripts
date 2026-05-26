@@ -7,28 +7,15 @@ import numpy as np
 import os
 from scipy.optimize import curve_fit
 from siriuspy.clientarch import Time, PVDataSet
+from caxscripts.config import Config
 # import sys
 import argparse
 
+cfg = Config()
 
-PVFLUX = [
-    "CAX:F:EPS01:MR1FIT1",
-    "CAX:F:EPS01:MR1FIT2",
-]
-
-PVTEMP = [
-    "CAX:A:RIO01:9226B:temp0",
-    "CAX:A:RIO01:9226B:temp1",
-    "CAX:A:RIO01:9226B:temp2",
-    "CAX:A:RIO01:9226B:temp3",
-    "CAX:A:RIO01:9226B:temp4",
-    ]
-
-PVPRESS = [
-    "CAX:A:QPC4P01:getPressure1",
-    "CAX:B:A4UHV01:ch1:Pressure-Mon"
-    ]
-
+PVFLUX  = cfg.PVFLUX
+PVTEMP  = cfg.PVTEMP
+PVPRESS = cfg.PVPRESS
 
 def _parse_dates(dt):
     """Parse dates from date string."""
