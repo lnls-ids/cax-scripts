@@ -85,7 +85,7 @@ def exponential_fit(filenames):
         # Rescale time.
         times = time_rescale(times)
 
-        p0 = (60, 75, 5.0)
+        p0 = (100, 10, 1.0)
         try:
             prm[idx], cov[idx] = curve_fit(negexp, times, fluxes, p0=p0)
         except Exception as err:
@@ -97,8 +97,16 @@ def exponential_fit(filenames):
     return data, prm, cov
 
 
-def plot_data(data, prm, pvnames):
-    """Plot data and fittings."""
+def plot_data(data, prm, pvnames, ddays=30):
+    """Plot data and fittings.
+
+    Args:
+        data    (list) : List of data arrays (flux vs. time).
+        prm     (list) : List of parameters for the exponential fit.
+        pvnames (list) : List of PV names.
+        ddays   (int)  : Number of days to extend the exponential fit.
+                         (default: 30)
+    """
     fig, ax = plt.subplots(1, 2, figsize=(15, 6))
     st = ['b-', 'g-']
 
@@ -112,16 +120,21 @@ def plot_data(data, prm, pvnames):
         c0, a0, tau = prm[idx]
 
         title = f"{pvnames[idx]}: ({timeinterval})"
-        ax[idx].plot(times[::25], fluxes[::25], st[idx], label="data")
+        # Take sample points from data.
+        ninterval = int(min(len(times) / 25, 25))
+        times_data  = times[::ninterval]
+        fluxes_data = fluxes[::ninterval]
+        ax[idx].plot(times_data, fluxes_data, st[idx], label="data")
         ax[idx].plot(times, fluxfit, 'y-',
                     label=f"{c0:.2f} + {a0:.2f} exp(-t/{tau:.2f})")
 
-        exttime = np.arange(0, 50)
+        exttime = np.arange(0, ddays, 1/ninterval)
         fluxfit = negexp(exttime, *prm[idx])
         ax[idx].plot(exttime, fluxfit, 'r-', label="extended fit")
         ax[idx].set_xlabel("days")
         ax[idx].set_ylabel("flux [mL / min]")
-        ax[idx].set_ylim(0, 150)
+        ylim = max(fluxes_data) * 1.2
+        ax[idx].set_ylim(0, ylim)
         ax[idx].set_title(title)
         ax[idx].legend()
         ax[idx].grid()
@@ -169,6 +182,11 @@ def cmd_args():
     )
 
     parser.add_argument(
+        '-x', '--extend-days', type=int, default=30,
+        help="Interval to extend the exponential fit in days. (default: 30)"
+    )
+
+    parser.add_argument(
         '-d', '--directory', type=str, default="./logs/",
         help="Directory to write output data files. (default: ./logs/)"
     )
@@ -207,8 +225,8 @@ def main():
 
     # Define PVs.
     pvnames = PVFLUX
-    # for pvnames in [PVFLUX]:
-    for pvnames in [PVFLUX, PVTEMP, PVPRESS]:
+    # for pvnames in [PVFLUX, PVTEMP, PVPRESS]:
+    for pvnames in [PVFLUX]:
         pvs_data, _, _ = get_pvdata(pvnames, idt, edt, timeout=30)
         pv = {pv: pvs_data[pv] for pv in pvnames}
 
@@ -225,7 +243,7 @@ def main():
             f"\n covariance matrix =\n{cov[idx]}\n")
 
     if args.plot_graph:
-        plot_data(data, prm, pvnames)
+        plot_data(data, prm, pvnames, args.extend_days)
 
 
 if __name__ == "__main__":
