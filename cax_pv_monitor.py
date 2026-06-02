@@ -16,6 +16,7 @@ cfg = Config()
 PVFLUX  = cfg.PVFLUX
 PVTEMP  = cfg.PVTEMP
 PVPRESS = cfg.PVPRESS
+PVSR    = cfg.SRPV['Storage ring current']
 
 
 def _parse_dates(dt):
@@ -27,6 +28,9 @@ def _parse_dates(dt):
 
 def get_pvdata(pvnames, initdate, enddate, timeout):
     """Now ruff doesn't bother me."""
+    if isinstance(pvnames, str):
+        pvnames = [pvnames]
+
     idt = _parse_dates(initdate)
     edt = _parse_dates(enddate)
 
@@ -50,10 +54,10 @@ def data_output(pvs, wdir):
         pvtimeval = np.dstack((pv.timestamp - t0, pv.value))[0]
         lasttime = datetime.fromtimestamp(pv.timestamp[-1])
         lasttime = datetime.strftime(lasttime, "%Y%m%d_%H%M%S")
-        fn = f"{wdir}/CAX_{pvname}_{lasttime}.txt"
+        fn = f"{wdir}/{pvname}_{lasttime}.txt"
         print(f" {fn}", end=", ")
         filenames.append(fn)
-        np.savetxt(fn, pvtimeval, fmt="%.2f")
+        np.savetxt(fn, pvtimeval, fmt=("%.2f", "%.8e"))
     print(" done.")
     return filenames
 
@@ -98,7 +102,9 @@ def exponential_fit(filenames):
     return data, prm, cov
 
 
-def plot_data(data, prm, pvnames, ddays=30):
+def plot_data(
+    data, prm, pvnames, ddays=30, sr_data=None, sr_name="SR current [mA]"
+):
     """Plot data and fittings.
 
     Args:
@@ -106,7 +112,9 @@ def plot_data(data, prm, pvnames, ddays=30):
         prm     (list) : List of parameters for the exponential fit.
         pvnames (list) : List of PV names.
         ddays   (int)  : Number of days to extend the exponential fit.
-                         (default: 30)
+                 (default: 30)
+        sr_data (array): SR current data array (time vs. value).
+        sr_name (str)  : SR current axis label.
     """
     fig, ax = plt.subplots(1, 2, figsize=(15, 6))
     st = ['b-', 'g-']
@@ -137,8 +145,85 @@ def plot_data(data, prm, pvnames, ddays=30):
         ylim = max(fluxes_data) * 1.2
         ax[idx].set_ylim(0, ylim)
         ax[idx].set_title(title)
-        ax[idx].legend()
+        ax[idx].legend(loc="upper left")
+
+        if sr_data is not None:
+            sr_times = sr_data[:, 0]
+            sr_vals = sr_data[:, 1]
+            sr_tdays = time_rescale(sr_times)
+            sr_step = max(1, int(min(len(sr_tdays) / 50, 50)))
+            axr = ax[idx].twinx()
+            axr.plot(
+                sr_tdays[::sr_step], sr_vals[::sr_step],
+                'k--', alpha=0.6, label="SR current"
+            )
+            axr.set_ylabel(sr_name)
+            axr.legend(loc="upper right")
+
         ax[idx].grid()
+
+    plt.tight_layout()
+    plt.show()
+
+
+def plot_simple(
+    data, pvnames, yunit="value", logy=False,
+    sr_data=None, sr_name="SR current [mA]"
+):
+    """Plot PV data without fitting.
+
+    Args:
+        data    (list): List of data arrays (time vs. value).
+        pvnames (list): List of PV names.
+        yunit   (str) : Label/unit for y axis.
+        logy   (bool): Use logarithmic scale in y axis.
+        sr_data (array): SR current data array (time vs. value).
+        sr_name (str)  : SR current axis label.
+    """
+    nplots = len(data)
+    ncols = 2
+    nrows = int(np.ceil(nplots / ncols))
+    fig, axes = plt.subplots(
+        nrows, ncols, figsize=(16, max(4, 3.2 * nrows))
+    )
+    axes = np.atleast_1d(axes).ravel()
+
+    for idx in range(nplots):
+        times = data[idx][:, 0]
+        vals = data[idx][:, 1]
+
+        tdays = time_rescale(times)
+        ninterval = max(1, int(min(len(tdays) / 50, 50)))
+
+        ax = axes[idx]
+        ax.plot(
+            tdays[::ninterval], vals[::ninterval], 'b-', label=pvnames[idx]
+        )
+
+        t0 = datetime.fromtimestamp(times[0])
+        t1 = datetime.fromtimestamp(times[-1])
+        ax.set_title(f"{pvnames[idx]}: (from {t0} to {t1})")
+        ax.set_xlabel("days")
+        ax.set_ylabel(yunit)
+        if logy:
+            ax.set_yscale("log", nonpositive="clip")
+        if sr_data is not None:
+            sr_times = sr_data[:, 0]
+            sr_vals = sr_data[:, 1]
+            sr_tdays = time_rescale(sr_times)
+            sr_step = max(1, int(min(len(sr_tdays) / 50, 50)))
+            axr = ax.twinx()
+            axr.plot(
+                sr_tdays[::sr_step], sr_vals[::sr_step],
+                'k--', alpha=0.6, label="SR current"
+            )
+            axr.set_ylabel(sr_name)
+            axr.legend(loc="upper right")
+        ax.grid()
+        ax.legend(loc="upper left")
+
+    for idx in range(nplots, len(axes)):
+        axes[idx].set_visible(False)
 
     plt.tight_layout()
     plt.show()
@@ -224,26 +309,70 @@ def main():
     # Initial and end dates in iso format (no seconds).
     idt, edt = args.init_date, args.end_date
 
-    # Define PVs.
-    # for pvnames in [PVFLUX, PVTEMP, PVPRESS]:
-    for pvnames in [PVFLUX]:
-        pvs_data, _, _ = get_pvdata(pvnames, idt, edt, timeout=30)
-        pv = {pv: pvs_data[pv] for pv in pvnames}
+    # Define PV groups to fetch.
+    pvnameslist = list()
 
-    # Write out data to files.
-    filenames = data_output(pv, wdir)
+    if args.flux:
+        pvnameslist.append(PVFLUX)
+    if args.temperature:
+        pvnameslist.append(PVTEMP)
+    if args.pressure:
+        pvnameslist.append(PVPRESS)
 
-    # Fit a decaying exponential to each PV data.
-    data, prm, cov = exponential_fit(filenames)
-    for idx in [0, 1]:
-        print(f"\n  >>>>> Results from Fitting C + A x exp(-t/tau) "
-            f"for PV {idx + 1}:\n C = {prm[idx][0]:.4f}, "
-            f"A = {prm[idx][1]:.4f}, tau = {prm[idx][2]:.4f}"
-            f"\n (half life = {prm[idx][2] * np.log(2):.2f})\n"
-            f"\n covariance matrix =\n{cov[idx]}\n")
+    # Write out data to files and plot them if needed.
+    for pvnames in pvnameslist:
+        pvnames_fetch = pvnames + [PVSR]
+        pvs_data, _, _ = get_pvdata(pvnames_fetch, idt, edt, timeout=30)
 
-    if args.plot_graph:
-        plot_data(data, prm, pvnames, args.extend_days)
+        # Print storage ring current as reference for each queried group.
+        sr_vals = pvs_data[PVSR].value
+        print(
+            f"\n >>>>> SR current [{PVSR}] [mA]: "
+            f"min={np.nanmin(sr_vals):.3f}, "
+            f"mean={np.nanmean(sr_vals):.3f}, "
+            f"max={np.nanmax(sr_vals):.3f}"
+        )
+
+        pv = {pv: pvs_data[pv] for pv in pvnames_fetch}
+
+        # Write out data to files.
+        filenames = data_output(pv, wdir)
+        # pv_to_file = dict(zip(pvnames_fetch, filenames, strict=True))
+        pv_to_file = dict(zip(pvnames_fetch, filenames))
+        grp_files = [pv_to_file[pv] for pv in pvnames]
+        sr_file = pv_to_file[PVSR]
+        sr_data = np.genfromtxt(sr_file)
+
+        # Flux case: fit and optionally plot with fit curves.
+        if pvnames == PVFLUX:
+            data, prm, cov = exponential_fit(grp_files)
+            for idx in [0, 1]:
+                print(f"\n  >>>>> Results from Fitting C + A x exp(-t/tau) "
+                    f"for PV {idx + 1}:\n C = {prm[idx][0]:.4f}, "
+                    f"A = {prm[idx][1]:.4f}, tau = {prm[idx][2]:.4f}"
+                    f"\n (half life = {prm[idx][2] * np.log(2):.2f})\n"
+                    f"\n covariance matrix =\n{cov[idx]}\n")
+
+            if args.plot_graph:
+                plot_data(
+                    data, prm, pvnames, args.extend_days,
+                    sr_data=sr_data, sr_name="SR current [mA]"
+                )
+
+        # Temperature and pressure: simple plot only.
+        else:
+            if args.plot_graph:
+                data = [np.genfromtxt(fname) for fname in grp_files]
+
+                if pvnames == PVTEMP:
+                    yunit, logy = "temperature", False
+                else:
+                    yunit, logy = "pressure [mbar]", True
+
+                plot_simple(
+                    data, pvnames, yunit=yunit, logy=logy,
+                    sr_data=sr_data, sr_name="SR current [mA]"
+                )
 
 
 if __name__ == "__main__":
