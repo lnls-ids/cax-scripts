@@ -2,11 +2,13 @@
 
 from siriuspy.devices import CAXCtrl
 
+
 class Config:
     """Configuration parameters and constants for Carcara scripts."""
-    
+
     cax = CAXCtrl()
-    
+    CAX_PREFIX = f"{cax.devname}:"
+
     # dvf
     SCALE = 1     # [um/px]
     MAXERRORCOUNT = 3
@@ -55,17 +57,6 @@ class Config:
         "SAPUCAIA ID phase" : "SI-17SA:ID-APU22:Phase-Mon",
     }
 
-    # CAX environment PVs (temperature, water flux etc.).
-    CAX_ENV_PVS = {
-        "Mirror 1 input flow"    : "CAX:F:EPS01:MR1FIT1",
-        "Mirror 1 output flow"   : "CAX:F:EPS01:MR1FIT2",
-        "Cold Finger temp"       : "CAX:A:RIO01:9226B:temp0",
-        "Braid Mirror temp"      : "CAX:A:RIO01:9226B:temp1",
-        "Bar Braid Cold Finger temp" : "CAX:A:RIO01:9226B:temp2",
-        "Peltier Cold Side temp" : "CAX:A:RIO01:9226B:temp3",
-        "Peltier Hot Side temp"  : "CAX:A:RIO01:9226B:temp4",
-        }
-
     # Slit limits defined from DVF images with slits fully open.
     # This avoids long motor moves and discrepancies between
     # hard limits and those defined in the front end.
@@ -76,20 +67,55 @@ class Config:
         'RIGHT'  : 46.5,
     }
 
+    # Environment PVs for the CAX mirror.
+    # Water flux.
     PVFLUX = [
-    cax.mirror.PVS.FLOWMETER1_MON,
-    cax.mirror.PVS.FLOWMETER2_MON,
+        CAX_PREFIX + cax.mirror.PVS.FM_01_MON,
+        CAX_PREFIX + cax.mirror.PVS.FM_02_MON,
     ]
 
+    # Temperature.
     PVTEMP = [
-        cax.mirror.PVS.TEMP0_MON,
-        cax.mirror.PVS.TEMP1_MON,
-        cax.mirror.PVS.TEMP2_MON,
-        cax.mirror.PVS.TEMP3_MON,
-        cax.mirror.PVS.TEMP4_MON,
-        ]
+        CAX_PREFIX + cax.mirror.PVS.TP_00_MON,
+        CAX_PREFIX + cax.mirror.PVS.TP_01_MON,
+        CAX_PREFIX + cax.mirror.PVS.TP_02_MON,
+        CAX_PREFIX + cax.mirror.PVS.TP_03_MON,
+        CAX_PREFIX + cax.mirror.PVS.TP_04_MON,
+    ]
 
+    # Pressure.
     PVPRESS = [
-        cax.mirror.PVS.PR_Q1_MON,
-        cax.mirror.PVS.PR_A1_MON
-        ]
+        CAX_PREFIX + cax.mirror.PVS.PR_A1_MON,
+        CAX_PREFIX + cax.mirror.PVS.PR_A2_MON,
+        CAX_PREFIX + cax.mirror.PVS.PR_A3_MON,
+        CAX_PREFIX + cax.mirror.PVS.PR_A4_MON,
+
+        CAX_PREFIX + cax.mirror.PVS.PR_Q1_MON,
+        CAX_PREFIX + cax.mirror.PVS.PR_Q2_MON,
+        CAX_PREFIX + cax.mirror.PVS.PR_Q3_MON,
+        CAX_PREFIX + cax.mirror.PVS.PR_Q4_MON,
+
+        CAX_PREFIX + cax.mirror.PVS.PR_V1_MON,
+        CAX_PREFIX + cax.mirror.PVS.PR_V2_MON,
+    ]
+
+    # CAX environment PVs dictionary (temperature, water flux etc.).
+    CAX_ENV_PVS = {
+        "Mirror 1 input flow"        : PVFLUX[0],
+        "Mirror 1 output flow"       : PVFLUX[1],
+        "Cold Finger temp"           : PVTEMP[0],
+        "Braid Mirror temp"          : PVTEMP[1],
+        "Bar Braid Cold Finger temp" : PVTEMP[2],
+        "Peltier Cold Side temp"     : PVTEMP[3],
+        "Peltier Hot Side temp"      : PVTEMP[4],
+        "Mirror 1 pressure"          : PVPRESS[0],
+        "Mirror 2 pressure"          : PVPRESS[1],
+        "Mirror 3 pressure"          : PVPRESS[2],
+        "Mirror 4 pressure"          : PVPRESS[3],
+        "Q1 pressure"                : PVPRESS[4],
+        "Q2 pressure"                : PVPRESS[5],
+        "Q3 pressure"                : PVPRESS[6],
+        "Q4 pressure"                : PVPRESS[7],
+        "V1 pressure"                : PVPRESS[8],
+        "V2 pressure"                : PVPRESS[9],
+        }

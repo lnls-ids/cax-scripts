@@ -1,4 +1,4 @@
-#!/opt/mamba_files/mamba/envs/sirius/bin/python
+#!/usr/bin/env python
 """Fetch data from Carcara's water flux PVs, fit exponentials and plot them."""
 from datetime import datetime
 import matplotlib.pyplot as plt
@@ -16,6 +16,7 @@ cfg = Config()
 PVFLUX  = cfg.PVFLUX
 PVTEMP  = cfg.PVTEMP
 PVPRESS = cfg.PVPRESS
+
 
 def _parse_dates(dt):
     """Parse dates from date string."""
@@ -224,7 +225,6 @@ def main():
     idt, edt = args.init_date, args.end_date
 
     # Define PVs.
-    pvnames = PVFLUX
     # for pvnames in [PVFLUX, PVTEMP, PVPRESS]:
     for pvnames in [PVFLUX]:
         pvs_data, _, _ = get_pvdata(pvnames, idt, edt, timeout=30)

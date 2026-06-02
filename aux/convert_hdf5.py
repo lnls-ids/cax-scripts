@@ -1,5 +1,6 @@
 #!/usr/bin/env python
 """Convert old HDF5 files to new format matching current motormov.py output."""
+import argparse
 import h5py
 import os
 import glob
@@ -99,9 +100,8 @@ def convert_file(old_path, output_dir):
     return new_path
 
 
-def main():
-    """Main function to parse arguments and convert files."""
-    import argparse
+def cmd_line():
+    """Parse command line arguments."""
     parser = argparse.ArgumentParser(
         description='Convert old HDF5 files to new motormov.py format.'
         )
@@ -115,7 +115,12 @@ def main():
         help=("Output directory for converted files "
               "(default: input_dir/converted/)")
               )
-    args = parser.parse_args()
+    return parser.parse_args()
+
+
+def main():
+    """Main function to parse arguments and convert files."""
+    args = cmd_line()
 
     output_dir = args.output_dir or os.path.join(args.input_dir, 'converted')
     os.makedirs(output_dir, exist_ok=True)
