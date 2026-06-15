@@ -101,11 +101,14 @@ def status_show(cax):
 
     # Run through all devices and print their status.
     for key, val in cax_status.items():
-        print(f" -- {key.replace('_', ' ').title()}:\n")
+        print(f" -- {key.replace('_', ' ').upper()}:\n")
         try:
             for pv, vs in val.items():
                 if isinstance(vs, (int, float)):
-                    print(f"    * {pv:15} : {vs:10.4f}")
+                    if vs < 1e-3:
+                        print(f"    * {pv:30} : {vs:1.4e}")
+                    else:
+                        print(f"    * {pv:30} : {vs:10.4f}")
                     continue
                 elif pv == 'image':
                     print(f"    * {pv:15} : [image data, shape = {vs.shape}]")
@@ -123,7 +126,8 @@ def status_show(cax):
                 # enbl = True if vs[1] == 1 else False
                 # print(f"{vs[0]:12.6f}, enabled = {enbl}")
             print("\n")
-        except Exception:
+        except Exception as err:
+            print(f" WARNING (status show) : {err}")
             for bl, v in val.items():
                 print(f"  * {bl:15} : {v}")
     print("\n#####\n")

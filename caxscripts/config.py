@@ -68,6 +68,10 @@ class Config:
     }
 
     # Environment PVs for the CAX mirror.
+    # The following structures are lists of the relevant PVs. They are then
+    # joined in a dictionary with the respective descriptions. The dictionary
+    # is used in the methods to geet the PV values.
+
     # Water flux.
     PVFLUX = [
         CAX_PREFIX + cax.mirror.PVS.FM_01_MON,
