@@ -221,7 +221,7 @@ class Histogram2DAnalyzer:
         """Compute quick beam parameters automatically on init.
 
         Sets self.beam_visible and self.hprm_qck if beam is visible.
-        
+
         Parameters:
             img: optional array to analyze instead of self.img
                 (e.g. self.img_thresholded).
@@ -237,7 +237,7 @@ class Histogram2DAnalyzer:
             raise ValueError("xedges length must be img.shape[0] + 1.")
         if self.yedges.size != ny + 1:
             raise ValueError("yedges length must be img.shape[1] + 1.")
-        
+
         cx, cy = self._qck_centroid(img=img)
         self.beam_visible = self._compute_beam_visibility(cx, cy, img=img)
 
@@ -431,7 +431,8 @@ class Histogram2DAnalyzer:
             fwhms = self._qck_fwhm(cx, cy)
             sigmas = self._qck_sigma(fwhms)
             exptime = data['dvf_B1']['attrs']['expo_time']
-            intensities = self.qck_intensity(img, [cx, cy], fwhms, exptime, threshold)
+            intensities = self.qck_intensity(img, [cx, cy], fwhms,
+                                             exptime, threshold)
 
             beam_props[sc] = [xval, [cx, cy], fwhms, sigmas, intensities]
             beam_imgs[sc] = img

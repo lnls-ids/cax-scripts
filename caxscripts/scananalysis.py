@@ -145,7 +145,7 @@ def dataset_from_h5_files(files):
     dataset = {}
     for filename in files:
         key = re.sub('pass', '',
-                     os.path.basename(filename).split('_')[2].split('-')[0])
+                     os.path.basename(filename).split('-')[0].split('_')[-1])
         dataset[key] = h5_to_dict(filename)
     return dataset
 
@@ -240,9 +240,13 @@ def observable_data(scandata, observable):
                                  values for each scan.
     """
     # The scanned variable (idx).
-    motor     = scandata['scan-0000']['attrs']['scan_motor']
-    device    = scandata['scan-0000']['attrs']['scan_device']
-    dev_motor = f"{device}.{motor}"
+    if scandata['scan-0000']['attrs'].get('scan_name') == 'slit':
+        device    = scandata['scan-0000']['attrs']['scan_device']
+        dev_motor = f"{device}"
+    else:
+        motor     = scandata['scan-0000']['attrs']['scan_motor']
+        device    = scandata['scan-0000']['attrs']['scan_device']
+        dev_motor = f"{device}.{motor}"
 
     # Centroids are calculated in beam_centroid().
     if observable == 'centroid':
@@ -264,10 +268,10 @@ def observable_data(scandata, observable):
         steps = np.array(list(fwhms.keys()))
 
         # Observable values.
-        xvals = np.array([fwhms[sc][0] for sc in steps])
+        xvals = np.array([fwhms[step][0] for step in steps])
 
         # FWHM values.
-        cvalues = np.array([fwhms[sc][1] for sc in steps])
+        cvalues = np.array([fwhms[step][1] for step in steps])
         fwhms   = [cvalues[:, 0], cvalues[:, 1]]
 
         return motor, steps, xvals, fwhms, None
@@ -280,10 +284,10 @@ def observable_data(scandata, observable):
         steps = np.array(list(intensities.keys()))
 
         # Observable values.
-        xvals = np.array([intensities[sc][0] for sc in steps])
+        xvals = np.array([intensities[step][0] for step in steps])
 
         # Intensity values.
-        cvalues      = np.array([intensities[sc][1] for sc in steps])
+        cvalues     = np.array([intensities[step][1] for step in steps])
         intensities = [cvalues[:, 0], cvalues[:, 1], cvalues[:, 2]]
 
         # Sigmas
@@ -394,8 +398,8 @@ def beam_centroid(datascan, dev_motor, droi=4, analysis_mode='qck'):
     beam_instances = beam_from_scan(datascan, dev_motor, droi, analysis_mode)
 
     steps, xvals, centrs, sigmas  = [], [], [], []
-    for st, values in beam_instances.items():
-        steps.append(st)
+    for step, values in beam_instances.items():
+        steps.append(step)
         xvals.append(values[0])
 
         ana = values[1]
@@ -458,9 +462,9 @@ def beam_intensity(datascan, dev_motor, droi=4, analysis_mode='qck'):
 
     intensities = {}
     droi = 2
-    for sc in beam_instances.keys():
-        xval = beam_instances[sc][0]
-        ana  = beam_instances[sc][1]
+    for step in beam_instances.keys():
+        xval = beam_instances[step][0]
+        ana  = beam_instances[step][1]
         hprm = getattr(ana, f"hprm_{analysis_mode}")
 
         img            = ana.img
@@ -482,7 +486,7 @@ def beam_intensity(datascan, dev_motor, droi=4, analysis_mode='qck'):
         peak_fwhm_norm = (peak / (fwhm_x * fwhm_y)
                           if fwhm_x * fwhm_y != 0 else 0)
 
-        intensities[sc] = [xval, [peak, intensity_by_mask, peak_fwhm_norm]]
+        intensities[step] = [xval, [peak, intensity_by_mask, peak_fwhm_norm]]
 
     return intensities
 
@@ -533,13 +537,13 @@ def _get_variable_metadata(data, dev_motor):
 # - Utility helpers: (none at this time)
 #
 
-def centroid_plot(data, scanpass, wdir='.', save_fmt='gif'):
+def centroid_plot(data, steppass, wdir='.', save_fmt='gif'):
     """Plot the beam profile images and their centroids in a dataset.
 
     Args:
         data (dict): Nested dict containing the set of one full scan
             (one pass).
-        scanpass (str): Identifier for the scan pass
+        steppass (str): Identifier for the scan pass
             (used in titles and filenames).
         wdir (str): Working directory to save the plots.
             Default is current directory.
@@ -550,10 +554,10 @@ def centroid_plot(data, scanpass, wdir='.', save_fmt='gif'):
     (motor, steps, xval,
      (cx_all, cy_all), _) = observable_data(data, 'centroid')
 
-    # Retrieve images in the same order as scan_nums.
-    images = [(f'scan-{sc:04d}',
-               data[f'scan-{sc:04d}']['dvf_B1']['data'])
-               for sc in steps]
+    # Retrieve images in the same order as step_nums.
+    images = [(f'step-{step:04d}',
+               data[f'step-{step:04d}']['dvf_B1']['data'])
+               for step in steps]
 
     fig, (ax_img, ax_cx, ax_cy) = plt.subplots(1, 3, figsize=(24, 5))
 
@@ -590,7 +594,7 @@ def centroid_plot(data, scanpass, wdir='.', save_fmt='gif'):
         name, img = images[frame]
         im.set_data(img)
         im.set_clim(img.min(), img.max())
-        img_title.set_text(f'Scan: {name}')
+        img_title.set_text(f'Step: {name}')
         marker_pt.set_data([xval[frame]], [cx_all[frame]])
         marker_pt_y.set_data([xval[frame]], [cy_all[frame]])
         return im, img_title, marker_pt, marker_pt_y
@@ -600,11 +604,11 @@ def centroid_plot(data, scanpass, wdir='.', save_fmt='gif'):
     plt.tight_layout(pad=3.0)
 
     if save_fmt == 'gif':
-        anim.save(f'{wdir}/beam_xy_pass_{scanpass}.gif',
+        anim.save(f'{wdir}/beam_xy_pass_{steppass}.gif',
                 writer='pillow', fps=2, dpi=300)
     elif save_fmt == 'mp4':
         # Alternatively, save as mp4 (requires ffmpeg):
-        anim.save(f'{wdir}/beam_xy_pass_{scanpass}.mp4',
+        anim.save(f'{wdir}/beam_xy_pass_{steppass}.mp4',
                 writer='ffmpeg', fps=2, dpi=300)
     else:
         print("File format not specified or unknown"
@@ -616,15 +620,15 @@ def centroid_plot(data, scanpass, wdir='.', save_fmt='gif'):
     ipydisplay(HTML(anim.to_jshtml()))
 
 
-def centroid_x_delta_plot(dataset, motor, scan_start=0, scan_end=-1):
-    """Plot motor change and centroid X change across scan passes.
+def centroid_x_delta_plot(dataset, motor, step_start=0, step_end=-1):
+    """Plot motor change and centroid X change across step passes.
 
     Args:
-        dataset (dict): Nested dict containing all scan passes.
+        dataset (dict): Nested dict containing all step passes.
         motor (str): Motor observable to plot, e.g. 'mirror.cs_rz'
             or 'mirror.ry'.
-        scan_start (int): Scan index for the initial centroid measurement.
-        scan_end (int): Scan index for the final centroid measurement.
+        step_start (int): Step index for the initial centroid measurement.
+        step_end (int): Step index for the final centroid measurement.
     """
     fig, axs = plt.subplots(2, 1, figsize=(10, 10))
     rax0 = axs[0].twinx()
@@ -633,24 +637,24 @@ def centroid_x_delta_plot(dataset, motor, scan_start=0, scan_end=-1):
 
     baseline_motor = []
     final_motor    = []
-    scan_idx       = []
+    step_idx       = []
     baseline_cx    = []
     final_cx       = []
 
-    # Get beam info for all scans in dataset.
+    # Get beam info for all steps in dataset.
 
     for data in dataset.values():
         baseline_motor.append(
-            data[f'scan-{scan_start:04d}']['attrs'][motor][0]
+            data[f'step-{step_start:04d}']['attrs'][motor][0]
             )
         final_motor.append(
-            data[f'scan-{scan_end:04d}']['attrs'][motor][0]
+            data[f'step-{step_end:04d}']['attrs'][motor][0]
             )
-        scan_idx.append(len(scan_idx))
+        step_idx.append(len(step_idx))
 
-        scans, xvals, centroid, sigmas = beam_centroid(data, motor)
-        baseline_cx.append(centroid[scan_start][0])
-        final_cx.append(centroid[scan_end][0])
+        steps, xvals, centroid, sigmas = beam_centroid(data, motor)
+        baseline_cx.append(centroid[step_start][0])
+        final_cx.append(centroid[step_end][0])
 
     init_motor = baseline_motor[0]
     init_cx    = baseline_cx[0]
@@ -670,9 +674,9 @@ def centroid_x_delta_plot(dataset, motor, scan_start=0, scan_end=-1):
     title = f'{motor_label} Change vs. Scan Index'
     left_label = f'{motor_label} Change'
 
-    line0,  = axs[0].plot(scan_idx, motor_delta, marker='o', color='blue',
+    line0,  = axs[0].plot(step_idx, motor_delta, marker='o', color='blue',
                           label=motor_label)
-    line0b, = rax0.plot(scan_idx, cx_delta, marker='o', color='green',
+    line0b, = rax0.plot(step_idx, cx_delta, marker='o', color='green',
                        label='Centroid X Change (px)')
 
     lines, labels = axs[0].get_legend_handles_labels()
@@ -680,14 +684,14 @@ def centroid_x_delta_plot(dataset, motor, scan_start=0, scan_end=-1):
     axs[0].legend(lines + lines2, labels + labels2, loc='best')
 
     axs[0].grid(True)
-    axs[0].set_xlabel('Scan Index')
+    axs[0].set_xlabel('Step Index')
     axs[0].set_ylabel(left_label)
     rax0.set_ylabel('Centroid X Change (px)')
     axs[0].set_title(title)
 
-    axs[1].plot(scan_idx, motor_cumulative, marker='o', color='blue',
+    axs[1].plot(step_idx, motor_cumulative, marker='o', color='blue',
                 label=f'Cumulative {motor_label} Change')
-    rax1.plot(scan_idx, cx_cumulative, marker='o', color='green',
+    rax1.plot(step_idx, cx_cumulative, marker='o', color='green',
               label='Cumulative Centroid X Change')
 
     lines, labels = axs[1].get_legend_handles_labels()
@@ -695,18 +699,18 @@ def centroid_x_delta_plot(dataset, motor, scan_start=0, scan_end=-1):
     axs[1].legend(lines + lines2, labels + labels2, loc='best')
 
     axs[1].grid(True)
-    axs[1].set_xlabel('Scan Index')
+    axs[1].set_xlabel('Step Index')
     axs[1].set_ylabel(f'Cumulative {motor_label} Change')
     rax1.set_ylabel('Cumulative Centroid X Change (px)')
-    axs[1].set_title(f'Cumulative {motor_label} Change vs. Scan Index')
+    axs[1].set_title(f'Cumulative {motor_label} Change vs. Step Index')
 
     plt.show()
 
 
 def dataset_plot(ax, xvals, yvals, datakey, observable, motor,
                  first_item=0, last_item=None, annotate_points=True):
-    """Plot the behavior of an observable across scans for a single dataset."""
-    # Plot the observable vs. scan number for the given dataset.
+    """Plot the behavior of an observable across steps for a single dataset."""
+    # Plot the observable vs. step number for the given dataset.
     # for yval in yvals:
 
     if annotate_points:
@@ -729,13 +733,13 @@ def dataset_plot(ax, xvals, yvals, datakey, observable, motor,
     ax.grid(True)
 
 
-def fwhm_plot(dataset, scanpass, wdir='.', save_fmt='gif'):
+def fwhm_plot(dataset, steppass, wdir='.', save_fmt='gif'):
     """Plot the beam profile images and their FWHMs in a dataset.
 
     Args:
         dataset (dict): Nested dict containing the set of one full scan
             (one pass).
-        scanpass (str): Identifier for the scan pass
+        steppass (str): Identifier for the step pass
             (used in titles and filenames).
         wdir (str): Working directory to save the plots.
             Default is current directory.
@@ -743,13 +747,13 @@ def fwhm_plot(dataset, scanpass, wdir='.', save_fmt='gif'):
             ('gif', 'mp4', or '' to skip saving).
     """
     # Use the existing function to get motor, positions and centroids.
-    (motor, scan_nums, xval,
+    (motor, step_nums, xval,
      (fx_all, fy_all)) = observable_data(dataset, 'fwhm')
 
-    # Retrieve images in the same order as scan_nums.
-    images = [(f'scan-{sc:04d}',
-            dataset[f'scan-{sc:04d}']['dvf_B1']['data'])
-            for sc in scan_nums]
+    # Retrieve images in the same order as step_nums.
+    images = [(f'step-{step:04d}',
+               dataset[f'step-{step:04d}']['dvf_B1']['data'])
+               for step in step_nums]
 
     fig, (ax_img, ax_fx, ax_fy) = plt.subplots(1, 3, figsize=(24, 5))
 
@@ -786,7 +790,7 @@ def fwhm_plot(dataset, scanpass, wdir='.', save_fmt='gif'):
         name, img = images[frame]
         im.set_data(img)
         im.set_clim(img.min(), img.max())
-        img_title.set_text(f'Scan: {name}')
+        img_title.set_text(f'Step: {name}')
         marker_pt.set_data([xval[frame]], [fx_all[frame]])
         marker_pt_y.set_data([xval[frame]], [fy_all[frame]])
         return im, img_title, marker_pt, marker_pt_y
@@ -796,11 +800,11 @@ def fwhm_plot(dataset, scanpass, wdir='.', save_fmt='gif'):
     plt.tight_layout(pad=3.0)
 
     if save_fmt == 'gif':
-        anim.save(f'{wdir}/beam_xy_pass_{scanpass}_fwhm.gif',
+        anim.save(f'{wdir}/beam_xy_pass_{steppass}_fwhm.gif',
                 writer='pillow', fps=2, dpi=300)
     elif save_fmt == 'mp4':
         # Alternatively, save as mp4 (requires ffmpeg):
-        anim.save(f'{wdir}/beam_xy_pass_{scanpass}_fwhm.mp4',
+        anim.save(f'{wdir}/beam_xy_pass_{steppass}_fwhm.mp4',
                 writer='ffmpeg', fps=2, dpi=300)
     else:
         print("File format not specified or unknown"
@@ -816,7 +820,7 @@ def plot_double_observable(axs, nrow, dataset, observable, observables,
                            first_item=0, last_item=None):
     """Plot two-component observables in separate subplots."""
     for key, data in dataset.items():
-        (motor, scans,
+        (motor, steps,
          xvals, yvals, sigmas) = observable_data(data, observable)
         dataset_plot(axs[nrow, 0], xvals, yvals[0], key,
                      f"{observable} X", motor, first_item, last_item)
@@ -866,12 +870,12 @@ def scan_plot(data, observables, first_item=0, last_item=None):
             nextrow += 1
 
     # Loop over each observable and dataset to plot the
-    # observable vs. scan number.
+    # observable vs. step number.
     for idx, observable in enumerate(observables):
         nr, nc = divmod(idx + nextrow * ncols, 2)
         ax = axs[nr, nc] if nrows > 1 and ncols > 1 else axs[idx + nextrow]
         for key, dataset in data.items():
-            (motor, scans,
+            (motor, steps,
              xvals, yvals, sigmas) = observable_data(dataset, observable)
             for yval in yvals:
                 dataset_plot(ax, xvals, yval, key, observable, motor,
@@ -888,11 +892,11 @@ def caustic_analysis(filename, filedir):
 
     f = h5py.File(name=file, mode='r')
 
-    positions = [f[scaname].attrs['z_pos'] for scaname in f]
+    positions = [f[scaname]['dvf_B1'].attrs['z_pos'] for scaname in f]
 
     caustic3d = []
     for scaname in f:
-        img = np.array(f[scaname]['dvf2'])
+        img = np.array(f[scaname]['dvf_B1'])
         caustic3d.append(img)
 
     causticx = np.sum(caustic3d, axis=1).T

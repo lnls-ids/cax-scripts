@@ -266,9 +266,9 @@ def snapshot_machine_state(cax: CAXCtrl):
         'slit_B1'    : slit_b1_status,
         'dvf_A1'     : dvf_a1_status,
         'dvf_B1'     : dvf_b1_status,
-        'sr'         : _get_pvs_status(Cfg.SRPV), 
-        'ids'        : _get_pvs_status(Cfg.IDPVS), 
-        'caxenv'     : _get_pvs_status(Cfg.CAX_ENV_PVS), 
+        # 'sr'         : _get_pvs_status(Cfg.SRPV), 
+        # 'ids'        : _get_pvs_status(Cfg.IDPVS), 
+        # 'caxenv'     : _get_pvs_status(Cfg.CAX_ENV_PVS), 
     }
 
     # Get SR current, ID's gaps/phases, and Carcara environment PVs.
