@@ -46,6 +46,8 @@ class CAXMirrorMove:
             'y3': 'leveler Z+',
         }
         kin_motor_descr = {
+            'cs_tx': 'x position',
+            'cs_ry': 'y rotation',
             'cs_rx': 'x rotation',
             'cs_rz': 'z rotation',
             'cs_tx': 'x position',

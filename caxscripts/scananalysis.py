@@ -222,7 +222,7 @@ def observable_statistics(dataset, observable):
 #           Scan level (one full scan)
 # ==================================================
 
-def observable_data(scandata, observable):
+def observable_data(scandata, observable, droi=4):
     """Extract the behavior of a variable across steps in a scan.
 
     Args:
@@ -250,7 +250,7 @@ def observable_data(scandata, observable):
 
     # Centroids are calculated in beam_centroid().
     if observable == 'centroid':
-        steps, xvals, centrs, sigmas = beam_centroid(scandata, dev_motor)
+        steps, xvals, centrs, sigmas = beam_centroid(scandata, dev_motor, droi)
 
         # Centroid values, reshaped to [all x, all y].
         centroids = [centrs[:, 0], centrs[:, 1]]
@@ -262,7 +262,7 @@ def observable_data(scandata, observable):
 
     # FWHMs are calculated in beam_fwhm().
     if observable == 'fwhm':
-        fwhms = beam_fwhm(scandata, dev_motor)
+        fwhms = beam_fwhm(scandata, dev_motor, droi)
 
         # Dict is ordered by scan number.
         steps = np.array(list(fwhms.keys()))
@@ -278,7 +278,7 @@ def observable_data(scandata, observable):
 
     # Intensities are calculated in beam_intensity().
     if observable == 'intensity':
-        intensities = beam_intensity(scandata, dev_motor)
+        intensities = beam_intensity(scandata, dev_motor, droi)
 
         # Dict is ordered by scan number.
         steps = np.array(list(intensities.keys()))
@@ -458,11 +458,12 @@ def beam_intensity(datascan, dev_motor, droi=4, analysis_mode='qck'):
     """
     beam_instances = beam_from_scan(datascan, dev_motor,
                                     droi, analysis_mode)
-    exptime = datascan['scan-0000']['dvf_B1']['attrs']['expo_time']
 
     intensities = {}
-    droi = 2
     for step in beam_instances.keys():
+        dstep = f"scan-{step:04d}"
+        exptime = datascan[dstep]['dvf_B1']['attrs']['expo_time']
+
         xval = beam_instances[step][0]
         ana  = beam_instances[step][1]
         hprm = getattr(ana, f"hprm_{analysis_mode}")
@@ -488,6 +489,10 @@ def beam_intensity(datascan, dev_motor, droi=4, analysis_mode='qck'):
 
         intensities[step] = [xval, [peak, intensity_by_mask, peak_fwhm_norm]]
 
+    # DEBUG
+    print(f"\n####\n (beam intensity) DROI = {droi}\n####\n")
+    # DEBUG
+    
     return intensities
 
 
@@ -817,11 +822,11 @@ def fwhm_plot(dataset, steppass, wdir='.', save_fmt='gif'):
 
 
 def plot_double_observable(axs, nrow, dataset, observable, observables,
-                           first_item=0, last_item=None):
+                           first_item=0, last_item=None, droi=4):
     """Plot two-component observables in separate subplots."""
     for key, data in dataset.items():
         (motor, steps,
-         xvals, yvals, sigmas) = observable_data(data, observable)
+         xvals, yvals, sigmas) = observable_data(data, observable, droi=droi)
         dataset_plot(axs[nrow, 0], xvals, yvals[0], key,
                      f"{observable} X", motor, first_item, last_item)
         dataset_plot(axs[nrow, 1], xvals, yvals[1], key,
@@ -830,7 +835,7 @@ def plot_double_observable(axs, nrow, dataset, observable, observables,
     return
 
 
-def scan_plot(data, observables, first_item=0, last_item=None):
+def scan_plot(data, observables, first_item=0, last_item=None, droi=8):
     """Plot the behavior of an observable across scans for each dataset.
 
     Args:
@@ -866,7 +871,7 @@ def scan_plot(data, observables, first_item=0, last_item=None):
         if observable in observables:
             plot_double_observable(axs, nextrow, data,
                                    observable, observables,
-                                   first_item, last_item)
+                                   first_item, last_item, droi=droi)
             nextrow += 1
 
     # Loop over each observable and dataset to plot the
@@ -876,7 +881,7 @@ def scan_plot(data, observables, first_item=0, last_item=None):
         ax = axs[nr, nc] if nrows > 1 and ncols > 1 else axs[idx + nextrow]
         for key, dataset in data.items():
             (motor, steps,
-             xvals, yvals, sigmas) = observable_data(dataset, observable)
+             xvals, yvals, sigmas) = observable_data(dataset, observable, droi=droi)
             for yval in yvals:
                 dataset_plot(ax, xvals, yval, key, observable, motor,
                             first_item, last_item)

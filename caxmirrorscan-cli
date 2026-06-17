@@ -17,13 +17,13 @@ import caxscripts.motormov as mtv
 # key = user choice;
 # list : menu description, PV name, device name, class name.
 SCAN_TYPES = {
-    '1' : ['Mirror x translation (Tx)',         'tx',       'mirror',
+    '1' : ['Mirror x translation (Tx)',         'cs_tx',    'mirror',
            'CAXMirrorMove'],
     '2' : ['Mirror x rotation    (Rx)',         'cs_rx',    'mirror',
            'CAXMirrorMove'],
     '3' : ['Mirror y translation (Ty)',         'cs_ty',    'mirror',
            'CAXMirrorMove'],
-    '4' : ['Mirror y rotation    (Ry)',         'ry',       'mirror',
+    '4' : ['Mirror y rotation    (Ry)',         'cs_ry',    'mirror',
            'CAXMirrorMove'],
     '5' : ['Mirror z rotation    (Rz)',         'cs_rz',    'mirror',
            'CAXMirrorMove'],
@@ -127,9 +127,9 @@ def status_show(cax):
                 # print(f"{vs[0]:12.6f}, enabled = {enbl}")
             print("\n")
         except Exception as err:
-            print(f" WARNING (status show) : {err}")
-            for bl, v in val.items():
-                print(f"  * {bl:15} : {v}")
+            print(f" WARNING (status show) : {err} ({pv})")
+            # for bl, v in val.items():
+            #     print(f"  * {bl:15} : {v}")
     print("\n#####\n")
 
     return cax_status
