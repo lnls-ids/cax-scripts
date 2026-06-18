@@ -278,17 +278,14 @@ def observable_data(scandata, observable, droi=4):
 
     # Intensities are calculated in beam_intensity().
     if observable == 'intensity':
-        intensities = beam_intensity(scandata, dev_motor, droi)
+        xvals, intensities = beam_intensity(scandata, dev_motor, droi)
 
         # Dict is ordered by scan number.
-        steps = np.array(list(intensities.keys()))
-
-        # Observable values.
-        xvals = np.array([intensities[step][0] for step in steps])
+        steps = np.arange(len(xvals))
 
         # Intensity values.
-        cvalues     = np.array([intensities[step][1] for step in steps])
-        intensities = [cvalues[:, 0], cvalues[:, 1], cvalues[:, 2]]
+        # cvalues     = np.array([intensities[step] for step in steps])
+        # intensities = [cvalues[:, 0], cvalues[:, 1], cvalues[:, 2]]
 
         # Sigmas
         sigmas = [np.sqrt(intens) for intens in intensities]
@@ -301,7 +298,12 @@ def observable_data(scandata, observable, droi=4):
         # Get scan number, scanning index and observable value.
         steps.append(int(step.split('-')[-1]))
         xmeta = _get_variable_metadata(stepdata, dev_motor)
-        ymeta = stepdata['attrs'].get(f"{device}.{observable}")
+
+        # Seach for observable within data attribute list.
+        for atr in stepdata['attrs'].keys():
+            if re.search(observable, atr):
+                ymeta = stepdata['attrs'].get(atr)
+                break
 
         # Append the values, handling both scalar and array metadata cases.
         if isinstance(xmeta, list) or isinstance(xmeta, np.ndarray):
@@ -351,7 +353,7 @@ def beam_from_scan(scandata, dev_motor, droi=4, analysis_mode='qck'):
         xval = float(_get_variable_metadata(data, dev_motor)[0])
 
         # Get image data and calculate centroid.
-        img = data['dvf_B1']['data']
+        img = data['dvf_B1']['data'].T
         img_xedges = np.arange(img.shape[0]+1)
         img_yedges = np.arange(img.shape[1]+1)
 
@@ -398,15 +400,14 @@ def beam_centroid(datascan, dev_motor, droi=4, analysis_mode='qck'):
     beam_instances = beam_from_scan(datascan, dev_motor, droi, analysis_mode)
 
     steps, xvals, centrs, sigmas  = [], [], [], []
-    for step, values in beam_instances.items():
+    # for step, values in beam_instances.items():
+    for step, (scanval, ana) in beam_instances.items():
         steps.append(step)
-        xvals.append(values[0])
+        xvals.append(scanval)
 
-        ana = values[1]
+        # ana = values[1]
         hprm = getattr(ana, f"hprm_{analysis_mode}")
-
         centrs.append([hprm['mux'], hprm['muy']])
-
         sigmas.append([hprm['sigx'], hprm['sigy']])
 
     return (np.array(steps), np.array(xvals),
@@ -459,7 +460,8 @@ def beam_intensity(datascan, dev_motor, droi=4, analysis_mode='qck'):
     beam_instances = beam_from_scan(datascan, dev_motor,
                                     droi, analysis_mode)
 
-    intensities = {}
+    xvals = []
+    peaks, intens_by_mask, peaks_by_fwhm = [], [], []
     for step in beam_instances.keys():
         dstep = f"scan-{step:04d}"
         exptime = datascan[dstep]['dvf_B1']['attrs']['expo_time']
@@ -468,12 +470,15 @@ def beam_intensity(datascan, dev_motor, droi=4, analysis_mode='qck'):
         ana  = beam_instances[step][1]
         hprm = getattr(ana, f"hprm_{analysis_mode}")
 
+        if ana.beam_visible == False:
+            continue
+
         img            = ana.img
         cx, cy         = hprm['mux'], hprm['muy']
         fwhm_x, fwhm_y = hprm['fwhmx'], hprm['fwhmy']
 
-        peak = np.mean(img[cy - droi : cy + droi + 1,
-                           cx - droi : cx + droi + 1])
+        peak = np.mean(img[cx - droi : cx + droi + 1,
+                           cy - droi : cy + droi + 1])
 
         mask = img > (peak / 2)
         area_mask  = np.sum(mask)
@@ -487,13 +492,23 @@ def beam_intensity(datascan, dev_motor, droi=4, analysis_mode='qck'):
         peak_fwhm_norm = (peak / (fwhm_x * fwhm_y)
                           if fwhm_x * fwhm_y != 0 else 0)
 
-        intensities[step] = [xval, [peak, intensity_by_mask, peak_fwhm_norm]]
+        xvals.append(xval)
+        peaks.append(peak)
+        intens_by_mask.append(intensity_by_mask)
+        peaks_by_fwhm.append(peak_fwhm_norm)
+        # intensities[step] = [peak, intensity_by_mask, peak_fwhm_norm]
 
     # DEBUG
     print(f"\n####\n (beam intensity) DROI = {droi}\n####\n")
     # DEBUG
     
-    return intensities
+    intensities = [
+        np.array(peaks),
+        np.array(intens_by_mask),
+        np.array(peaks_by_fwhm)
+    ]
+
+    return np.array(xvals), intensities
 
 
 # ==================================================
@@ -638,7 +653,6 @@ def centroid_x_delta_plot(dataset, motor, step_start=0, step_end=-1):
     fig, axs = plt.subplots(2, 1, figsize=(10, 10))
     rax0 = axs[0].twinx()
     rax1 = axs[1].twinx()
-    plt.subplots_adjust(hspace=0.3)
 
     baseline_motor = []
     final_motor    = []
@@ -821,21 +835,19 @@ def fwhm_plot(dataset, steppass, wdir='.', save_fmt='gif'):
     ipydisplay(HTML(anim.to_jshtml()))
 
 
-def plot_double_observable(axs, nrow, dataset, observable, observables,
+def plot_double_observable(axs, nextaxis, dataset, observable,
                            first_item=0, last_item=None, droi=4):
     """Plot two-component observables in separate subplots."""
     for key, data in dataset.items():
         (motor, steps,
          xvals, yvals, sigmas) = observable_data(data, observable, droi=droi)
-        dataset_plot(axs[nrow, 0], xvals, yvals[0], key,
+        dataset_plot(axs[nextaxis], xvals, yvals[0], key,
                      f"{observable} X", motor, first_item, last_item)
-        dataset_plot(axs[nrow, 1], xvals, yvals[1], key,
+        dataset_plot(axs[nextaxis+1], xvals, yvals[1], key,
                      f'{observable} Y', motor, first_item, last_item)
-    observables.remove(observable)
-    return
 
 
-def scan_plot(data, observables, first_item=0, last_item=None, droi=8):
+def scan_plot(dataset, observables, first_item=0, last_item=None, droi=8):
     """Plot the behavior of an observable across scans for each dataset.
 
     Args:
@@ -852,13 +864,24 @@ def scan_plot(data, observables, first_item=0, last_item=None, droi=8):
     # the number of observables.
     nobs = len(observables)
     # Add an extra plot for the centroid components.
-    nobs += sum([1 for obs in ['centroid', 'fwhm', 'intensity']
+    nobs += sum([1 for obs in ['centroid', 'fwhm']
                  if obs in observables])
+    if 'intensity' in observables:
+        nobs += 2 
+
+    # DEBUG
+    # print(f"\n####\n#### Number of observables = {nobs}\n####\n")
+    # DEBUG
 
     nrows = max((nobs + 1) // 2, 1)
     ncols = 2 if nobs > 1 else 1
     fig, axs = plt.subplots(nrows=nrows, ncols=ncols,
-                            figsize=(10 * ncols, 6 * nrows))
+                            figsize=(10 * ncols, 6 * nrows),
+                            gridspec_kw={'hspace' : 0.6})
+    # fig.tight_layout()
+    # Flatten axe structure to follow the sequence of observables.
+    faxs = axs.flatten()
+
     # Make it iterable
     if nrows == 1 and ncols == 1:
         axs = [axs]
@@ -866,24 +889,42 @@ def scan_plot(data, observables, first_item=0, last_item=None, droi=8):
     #     axs = axs.flatten()
 
     # Some observables demand two subplots.
-    nextrow = 0
-    for observable in ['centroid', 'fwhm', 'intensity']:
-        if observable in observables:
-            plot_double_observable(axs, nextrow, data,
-                                   observable, observables,
-                                   first_item, last_item, droi=droi)
-            nextrow += 1
+    nextaxis = 0
+
+    if 'centroid' in observables:
+        plot_double_observable(faxs, nextaxis, dataset, 'centroid',
+                               first_item, last_item, droi=droi)
+        observables.remove('centroid')
+        nextaxis += 2
+
+    if 'fwhm' in observables:
+        plot_double_observable(faxs, nextaxis, dataset, 'fwhm',
+                               first_item, last_item, droi=droi)
+        observables.remove('fwhm')
+        nextaxis += 2
+
+    if 'intensity' in observables:
+        for key, data in dataset.items():
+            (motor, steps,
+            xvals, yvals, sigmas) = observable_data(data, 'intensity', droi=droi)
+            peaks, intens_by_mask, peak_by_fwhm = yvals
+            dataset_plot(faxs[nextaxis], xvals, peaks, key,
+                        "Peak", motor, first_item, last_item)
+            dataset_plot(faxs[nextaxis+1], xvals, intens_by_mask, key,
+                        "Masked intensity", motor, first_item, last_item)
+            dataset_plot(faxs[nextaxis+2], xvals, peak_by_fwhm, key,
+                        "Peak at FWHM", motor, first_item, last_item)
+        observables.remove('intensity')
+        nextaxis += 3
 
     # Loop over each observable and dataset to plot the
     # observable vs. step number.
     for idx, observable in enumerate(observables):
-        nr, nc = divmod(idx + nextrow * ncols, 2)
-        ax = axs[nr, nc] if nrows > 1 and ncols > 1 else axs[idx + nextrow]
-        for key, dataset in data.items():
+        for key, data in dataset.items():
             (motor, steps,
-             xvals, yvals, sigmas) = observable_data(dataset, observable, droi=droi)
+             xvals, yvals, sigmas) = observable_data(data, observable, droi=droi)
             for yval in yvals:
-                dataset_plot(ax, xvals, yval, key, observable, motor,
+                dataset_plot(faxs[nextaxis+idx], xvals, yval, key, observable, motor,
                             first_item, last_item)
 
     plt.show()
