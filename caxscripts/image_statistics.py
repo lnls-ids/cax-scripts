@@ -3,7 +3,7 @@
 All functionality lives inside Histogram2DAnalyzer:
 
   Construction
-  - Histogram2DAnalyzer(img, xedges, yedges)  — from an existing histogram.
+  - Histogram2DAnalyzer(img, x_bin_edges, y_bin_edges)  — from an existing histogram.
   - Histogram2DAnalyzer.from_gaussian(...)     — generate a Gaussian histogram.
 
   Quick Analysis (run on init)
@@ -64,7 +64,7 @@ class Histogram2DAnalyzer:
     Usage::
 
         # From an existing histogram:
-        ana = Histogram2DAnalyzer(hist, xedges, yedges)
+        ana = Histogram2DAnalyzer(hist, x_bin_edges, y_bin_edges)
 
         # Or generate a Gaussian test histogram directly:
         ana = Histogram2DAnalyzer.from_gaussian(bins=80, size=200_000)
@@ -87,30 +87,28 @@ class Histogram2DAnalyzer:
     # Construction.
     # ------------------------------------------------------------------
 
-    def __init__(self, img, xedges, yedges, droi=4):
+    def __init__(self, img, x_bin_edges=None, y_bin_edges=None, droi=4):
         """Initialise with a 2D histogram and its bin edges.
 
         Arguments:
             img: 2D histogram array.
-            xedges: 1D array of x bin edges (length img.shape[0] + 1).
-            yedges: 1D array of y bin edges (length img.shape[1] + 1).
+            x_bin_edges: 1D array of x bin edges (length img.shape[0] + 1).
+            y_bin_edges: 1D array of y bin edges (length img.shape[1] + 1).
             droi: half-size of the region of interest for beam visibility.
 
         Runs compute_quick() automatically to populate beam_visible and hprm_qck.
         """
         self.img               = np.asarray(img,    dtype=float)
-        self.xedges            = np.asarray(xedges, dtype=float)
-        self.yedges            = np.asarray(yedges, dtype=float)
-        self.xcenters          = 0.5 * (self.xedges[:-1] + self.xedges[1:])
-        self.ycenters          = 0.5 * (self.yedges[:-1] + self.yedges[1:])
         self.droi              = droi
         self.beam_visible      = None  # set by compute_quick()
         self.hprm_qck          = None  # quick params: cx, cy, fwhm_x, fwhm_y, sig_x, sig_y
         self.hprm_mom          = None  # moments params
         self.hprm_fit          = None  # fit params
+        self.hprm              = None
         self.optimal_threshold = np.max(img) * 0.1
         self.img_thresholded   = None
         self.data              = None
+        self._bin_centers(x_bin_edges, y_bin_edges)
 
         # Run quick analysis automatically
         self.compute_quick()
@@ -233,10 +231,10 @@ class Histogram2DAnalyzer:
         if img.ndim != 2:
             raise ValueError("img must be a 2D array.")
         nx, ny = img.shape
-        if self.xedges.size != nx + 1:
-            raise ValueError("xedges length must be img.shape[0] + 1.")
-        if self.yedges.size != ny + 1:
-            raise ValueError("yedges length must be img.shape[1] + 1.")
+        if self.x_bin_edges.size != nx + 1:
+            raise ValueError("x_bin_edges length must be img.shape[0] + 1.")
+        if self.y_bin_edges.size != ny + 1:
+            raise ValueError("y_bin_edges length must be img.shape[1] + 1.")
 
         cx, cy = self._qck_centroid(img=img)
         self.beam_visible = self._compute_beam_visibility(cx, cy, img=img)
@@ -261,8 +259,8 @@ class Histogram2DAnalyzer:
             "sig_minor" : min(sigx, sigy),
             "theta"     : 0.5*np.pi*float(sigx<sigy),  # ellipse aligned to axes
             "evecs"     : np.array([[1, 0], [0, 1]]),  # identity for quick estimate
-            "xcenters"  : self.xcenters, 
-            "ycenters"  : self.ycenters,
+            "x_bin_centers"  : self.x_bin_centers, 
+            "y_bin_centers"  : self.y_bin_centers,
 
         }
         return self.hprm_qck
@@ -492,10 +490,10 @@ class Histogram2DAnalyzer:
         """
         rng = np.random.default_rng()
         samples = rng.multivariate_normal(mean=mean, cov=cov, size=size)
-        hist, xedges, yedges = np.histogram2d(
+        hist, x_bin_edges, y_bin_edges = np.histogram2d(
             samples[:, 0], samples[:, 1], bins=bins, range=hist_range
         )
-        return cls(hist, xedges, yedges)
+        return cls(hist, x_bin_edges, y_bin_edges)
 
     # ------------------------------------------------------------------
     # Preprocessing.
@@ -523,11 +521,15 @@ class Histogram2DAnalyzer:
     # Private math helpers.
     # ------------------------------------------------------------------
 
-    def _bin_centers(self):
-        """Return (xcenters, ycenters) computed from the stored edges."""
-        self.xcenters = 0.5 * (self.xedges[:-1] + self.xedges[1:])
-        self.ycenters = 0.5 * (self.yedges[:-1] + self.yedges[1:])
-        return self.xcenters, self.ycenters
+    def _bin_centers(self, x_bin_edges, y_bin_edges):
+        """Return (x_bin_centers, y_bin_centers) computed from the stored edges."""
+        if (x_bin_edges and y_bin_edges) is None:
+            self.x_bin_edges = np.arange(self.img.shape[0]+1)
+            self.y_bin_edges = np.arange(self.img.shape[1]+1)
+            if (x_bin_edges is not None) or (y_bin_edges is not None):
+                print("Warning: edges are not uniform.")
+        self.x_bin_centers = 0.5 * (self.x_bin_edges[:-1] + self.x_bin_edges[1:])
+        self.y_bin_centers = 0.5 * (self.y_bin_edges[:-1] + self.y_bin_edges[1:])
 
     def _covariance_from_moments(self, weight):
         """Compute the 2x2 covariance matrix from weighted bin-center moments.
@@ -538,7 +540,7 @@ class Histogram2DAnalyzer:
             covmat: 2x2 covariance matrix.
             (mux, muy): means.
         """
-        xg, yg = np.meshgrid(self.xcenters, self.ycenters, indexing="ij")
+        xg, yg = np.meshgrid(self.x_bin_centers, self.y_bin_centers, indexing="ij")
         wsum = weight.sum()
         if wsum <= 0:
             raise ValueError("Total weight must be positive.")
@@ -651,10 +653,10 @@ class Histogram2DAnalyzer:
         if img.ndim != 2:
             raise ValueError("img must be a 2D array.")
         nx, ny = img.shape
-        if self.xedges.size != nx + 1:
-            raise ValueError("xedges length must be img.shape[0] + 1.")
-        if self.yedges.size != ny + 1:
-            raise ValueError("yedges length must be img.shape[1] + 1.")
+        if self.x_bin_edges.size != nx + 1:
+            raise ValueError("x_bin_edges length must be img.shape[0] + 1.")
+        if self.y_bin_edges.size != ny + 1:
+            raise ValueError("y_bin_edges length must be img.shape[1] + 1.")
 
         covmat, (mux, muy) = self._covariance_from_moments(img)
         sigx = np.sqrt(covmat[0, 0])
@@ -675,8 +677,9 @@ class Histogram2DAnalyzer:
             "sig_minor" : sig_minor,
             "theta"     : self.adjust_angle(theta), 
             "evecs"     : evecs,
-            "xcenters"  : self.xcenters, 
-            "ycenters"  : self.ycenters,
+            "x_bin_centers"  : self.x_bin_centers, 
+            "y_bin_centers"  : self.y_bin_centers,
+            
         }
         return self.hprm_mom
 
@@ -705,11 +708,11 @@ class Histogram2DAnalyzer:
             img = self.img
 
 
-        xg, yg = np.meshgrid(self.xcenters, self.ycenters, indexing="ij")
+        xg, yg = np.meshgrid(self.x_bin_centers, self.y_bin_centers, indexing="ij")
 
         # Normalize to PDF so amplitude matches the normalized Gaussian.
-        dx = self.xcenters[1] - self.xcenters[0]
-        dy = self.ycenters[1] - self.ycenters[0]
+        dx = self.x_bin_centers[1] - self.x_bin_centers[0]
+        dy = self.y_bin_centers[1] - self.y_bin_centers[0]
         img_norm = img / (img.sum() * dx * dy)
 
         # Fit to ROI.
@@ -755,8 +758,8 @@ class Histogram2DAnalyzer:
             "sig_minor" : sig_minor,
             "theta"     : self.adjust_angle(theta),
             "evecs"     : evecs,
-            "xcenters"  : self.xcenters,
-            "ycenters"  : self.ycenters,
+            "x_bin_centers"  : self.x_bin_centers,
+            "y_bin_centers"  : self.y_bin_centers,
         }
         return self.hprm_fit
 
@@ -828,12 +831,12 @@ class Histogram2DAnalyzer:
             m: the pcolormesh artist.
         """
         m = ax.pcolormesh(
-            self.xedges, self.yedges, self.img.T,
+            self.x_bin_edges, self.y_bin_edges, self.img.T,
             shading="auto", cmap="viridis",
         )
         ax.set_aspect("equal", adjustable="box")
-        ax.set_xlim(self.xedges[0], self.xedges[-1])
-        ax.set_ylim(self.yedges[0], self.yedges[-1])
+        ax.set_xlim(self.x_bin_edges[0], self.x_bin_edges[-1])
+        ax.set_ylim(self.y_bin_edges[0], self.y_bin_edges[-1])
         if colorbar:
             fig.colorbar(m, ax=ax, label="count")
         return m
