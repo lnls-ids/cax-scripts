@@ -87,18 +87,19 @@ class Histogram2DAnalyzer:
     # Construction.
     # ------------------------------------------------------------------
 
-    def __init__(self, img, x_bin_edges=None, y_bin_edges=None, droi=4):
+    def __init__(self, img, droi=4, x_bin_edges=None, y_bin_edges=None):
         """Initialise with a 2D histogram and its bin edges.
 
         Arguments:
             img: 2D histogram array.
             x_bin_edges: 1D array of x bin edges (length img.shape[0] + 1).
             y_bin_edges: 1D array of y bin edges (length img.shape[1] + 1).
-            droi: half-size of the region of interest for beam visibility.
+            droi: size of region to define the peak intensity.
 
-        Runs compute_quick() automatically to populate beam_visible and hprm_qck.
+        Runs compute_quick() automatically to populate beam_visible
+        and hprm_qck.
         """
-        self.img               = np.asarray(img,    dtype=float)
+        self.img               = np.asarray(img, dtype=float)
         self.droi              = droi
         self.beam_visible      = None  # set by compute_quick()
         # quick params: cx, cy, fwhm_x, fwhm_y, sig_x, sig_y
@@ -118,42 +119,35 @@ class Histogram2DAnalyzer:
     # Quick analysis block (run on init).
     # ------------------------------------------------------------------
 
-    def _compute_beam_visibility(self, cx, cy, img=None):
+    def _compute_beam_visibility(self, cx, cy):
         """Compute whether the beam is visible based on peak-to-average ratio.
 
         Args:
             cx: x-coordinate of the beam centroid.
             cy: y-coordinate of the beam centroid.
-            img: optional array to analyze instead of self.img
 
         Returns:
             bool: True if the beam is considered visible.
         """
-        img = self.img if img is None else np.asarray(img, dtype=float)
         roi_avg = np.mean(
-                 img[cx - self.droi:cx + self.droi, 
-                     cy - self.droi:cy + self.droi]
+                 self.img[cx - self.droi : cx + self.droi,
+                          cy - self.droi : cy + self.droi]
         )
-        mean = np.mean(img)
+        mean = np.mean(self.img)
         ratio = roi_avg / mean if mean != 0 else 0
         return ratio >= PEAK2AVG_THRESHOLD
 
-    def _qck_centroid(self, img=None):
+    def _qck_centroid(self):
         """Calculate beam centroid via smoothed projected sums.
-
-        Args:
-            img: optional array to analyze instead of self.img
-                (e.g. self.img_thresholded).
 
         Returns:
             np.array: [cx, cy] centroid coordinates.
         """
-        img = self.img if img is None else np.asarray(img, dtype=float)
         # image is being transposed before being attributed to the class 
         # then, its shape is (nx, ny) and the x projection is along axis=1, 
         # while the y projection along axis=0
-        cx_sum = np.sum(img, axis=1)
-        cy_sum = np.sum(img, axis=0)
+        cx_sum = np.sum(self.img, axis=1)
+        cy_sum = np.sum(self.img, axis=0)
         xsmooth = savgol_filter(cx_sum, window_length=21, polyorder=2)
         ysmooth = savgol_filter(cy_sum, window_length=21, polyorder=2)
         return np.array([np.argmax(xsmooth), np.argmax(ysmooth)])
@@ -216,7 +210,7 @@ class Histogram2DAnalyzer:
             theta_wrapped -= 2 * np.pi
         return theta_wrapped
 
-    def compute_quick(self, img=None):
+    def compute_quick(self):
         """Compute quick beam parameters automatically on init.
 
         Sets self.beam_visible and self.hprm_qck if beam is visible.
@@ -228,24 +222,23 @@ class Histogram2DAnalyzer:
         Returns:
             dict or None: hprm_qck if visible, None otherwise.
         """
-        img = self.img if img is None else np.asarray(img, dtype=float)
-        if img.ndim != 2:
+        if self.img.ndim != 2:
             raise ValueError("img must be a 2D array.")
-        nx, ny = img.shape
+        nx, ny = self.img.shape
         if self.x_bin_edges.size != nx + 1:
             raise ValueError("x_bin_edges length must be img.shape[0] + 1.")
         if self.y_bin_edges.size != ny + 1:
             raise ValueError("y_bin_edges length must be img.shape[1] + 1.")
 
-        cx, cy = self._qck_centroid(img=img)
-        self.beam_visible = self._compute_beam_visibility(cx, cy, img=img)
+        cx, cy = self._qck_centroid()
+        self.beam_visible = self._compute_beam_visibility(cx, cy)
 
         if not self.beam_visible:
             import warnings
             warnings.warn("Beam not visible; skipping quick analysis.")
             return None
 
-        fwhms = self._qck_fwhm(cx, cy, img=img)
+        fwhms = self._qck_fwhm(cx, cy)
         sigx = self.fwhm_to_sigma(fwhms[0])
         sigy = self.fwhm_to_sigma(fwhms[1])
         self.hprm_qck = {
@@ -526,20 +519,24 @@ class Histogram2DAnalyzer:
     # ------------------------------------------------------------------
 
     def _bin_centers(self, x_bin_edges, y_bin_edges):
-        """Return (x_bin_centers, y_bin_centers) computed from the stored edges."""
-        if (x_bin_edges and y_bin_edges) is None:
+        """Calculate x and y bin centers from the stored edges."""
+        if (x_bin_edges is None) or (y_bin_edges is None):
             self.x_bin_edges = np.arange(self.img.shape[0]+1)
             self.y_bin_edges = np.arange(self.img.shape[1]+1)
-            if (x_bin_edges is not None) or (y_bin_edges is not None):
-                print("Warning: edges are not uniform.")
-        self.x_bin_centers = 0.5 * (self.x_bin_edges[:-1] + self.x_bin_edges[1:])
-        self.y_bin_centers = 0.5 * (self.y_bin_edges[:-1] + self.y_bin_edges[1:])
+        else:
+            self.x_bin_edges = np.asarray(x_bin_edges)
+            self.y_bin_edges = np.asarray(y_bin_edges)
+        self.x_bin_centers = 0.5 * (self.x_bin_edges[:-1] +
+                                    self.x_bin_edges[1:])
+        self.y_bin_centers = 0.5 * (self.y_bin_edges[:-1] +
+                                    self.y_bin_edges[1:])
 
     def _covariance_from_moments(self, weight):
         """Compute the 2x2 covariance matrix from weighted bin-center moments.
 
-        Arguments:
+        Args:
             weight: 2D weight array (same shape as the histogram).
+
         Returns:
             covmat: 2x2 covariance matrix.
             (mux, muy): means.

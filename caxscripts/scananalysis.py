@@ -19,7 +19,7 @@ The analysis operates at three hierarchical data levels:
 Function Categories (matching module section structure):
 
 Scan parameter extraction methods:
-- _get_variable_metadata: Extract scanned variable metadata from a single
+- _get_variable_values: Extract scanned variable values from a single
         data step (data level).
 
 Beam properties extraction methods and analysis:
@@ -222,11 +222,22 @@ def observable_statistics(dataset, observable):
 #           Scan level (one full scan)
 # ==================================================
 
-def observable_data(scandata, observable, droi=4):
+def _get_scan_names(datastep):
+    attrs0    = datastep['attrs']
+    scanname  = attrs0['scan_name']
+    scandev   = attrs0['scan_device']
+    scanmotor = attrs0.get('scan_motor')
+    dev_motor = f"{scandev}"
+    if scanmotor is not None:
+        dev_motor += f".{scanmotor}"
+    return scanname, scandev, scanmotor, dev_motor
+
+
+def observable_data(datascan, observable, droi=4):
     """Extract the behavior of a variable across steps in a scan.
 
     Args:
-        scandata (dict): Nested dict containing the set of
+        datascan (dict): Nested dict containing the set of
                          one full scan (one pass).
         observable (str): The variable to extract (e.g.,
                           'photocollector', 'centroid').
@@ -241,18 +252,16 @@ def observable_data(scandata, observable, droi=4):
         yval (list of np.array): List of arrays containing the observable
                                  values for each scan.
     """
-    # The scanned variable (idx).
-    if scandata['scan-0000']['attrs'].get('scan_name') == 'slit':
-        device    = scandata['scan-0000']['attrs']['scan_device']
-        dev_motor = f"{device}"
-    else:
-        motor     = scandata['scan-0000']['attrs']['scan_motor']
-        device    = scandata['scan-0000']['attrs']['scan_device']
-        dev_motor = f"{device}.{motor}"
+    # The scanned variable name (device.motor).
+    dev_motor = _get_scan_names(datascan['scan-0000'])[3]
+
+    # Get observable instances.
+    if observable in ['centroid', 'fwhm', 'intensity']:
+        beam_instances = beam_from_scan(datascan, droi)
 
     # Centroids are calculated in beam_centroid().
     if observable == 'centroid':
-        steps, xvals, centrs, sigmas = beam_centroid(scandata, dev_motor, droi)
+        steps, xvals, centrs, sigmas = beam_centroid(beam_instances)
 
         # Centroid values, reshaped to [all x, all y].
         centroids = [centrs[:, 0], centrs[:, 1]]
@@ -260,11 +269,11 @@ def observable_data(scandata, observable, droi=4):
         # Sigmas, reshaped to [all sx, all sy].
         sigmas  = [sigmas[:, 0], sigmas[:, 1]]
 
-        return motor, steps, xvals, centroids, sigmas
+        return dev_motor, steps, xvals, centroids, sigmas
 
     # FWHMs are calculated in beam_fwhm().
     if observable == 'fwhm':
-        fwhms = beam_fwhm(scandata, dev_motor, droi)
+        fwhms = beam_fwhm(beam_instances)
 
         # Dict is ordered by scan number.
         steps = np.array(list(fwhms.keys()))
@@ -276,11 +285,13 @@ def observable_data(scandata, observable, droi=4):
         cvalues = np.array([fwhms[step][1] for step in steps])
         fwhms   = [cvalues[:, 0], cvalues[:, 1]]
 
-        return motor, steps, xvals, fwhms, None
+        return dev_motor, steps, xvals, fwhms, None
 
     # Intensities are calculated in beam_intensity().
     if observable == 'intensity':
-        xvals, intensities = beam_intensity(scandata, dev_motor, droi)
+        expo_time = datascan['scan-0000']['dvf_B1']['attrs']['expo_time']
+        xvals, intensities = beam_intensity(beam_instances,
+                                            droi=droi, expo_time=expo_time)
 
         # Dict is ordered by scan number.
         steps = np.arange(len(xvals))
@@ -292,38 +303,44 @@ def observable_data(scandata, observable, droi=4):
         # Sigmas
         sigmas = [np.sqrt(intens) for intens in intensities]
 
-        return motor, steps, xvals, intensities, sigmas
+        return dev_motor, steps, xvals, intensities, sigmas
 
     steps, xval, yval = [], [], []
     # Run over each point scanned.
-    for step, stepdata in scandata.items():
+    for step, stepdata in datascan.items():
         # Get scan number, scanning index and observable value.
         steps.append(int(step.split('-')[-1]))
-        xmeta = _get_variable_metadata(stepdata, dev_motor)
+        xdata = _get_variable_values(stepdata, dev_motor)
 
         # Seach for observable within data attribute list.
         for atr in stepdata['attrs'].keys():
             if re.search(observable, atr):
-                ymeta = stepdata['attrs'].get(atr)
+                ydata = stepdata['attrs'].get(atr)
                 break
 
         # Append the values, handling both scalar and array metadata cases.
-        if isinstance(xmeta, list) or isinstance(xmeta, np.ndarray):
-            xval.append(float(xmeta[0]))
+        if xdata.ndim == 0:
+            xval.append(float(xdata))
+        elif xdata.ndim == 1:
+            xval.append(xdata[0])
         else:
-            xval.append(float(xmeta))
-        if isinstance(ymeta, list) or isinstance(ymeta, np.ndarray):
-            yval.append(float(ymeta[0]))
-        else:
-            yval.append(float(ymeta))
+            # Take only the values, not the limits. This is the slits case,
+            # so the four values of the blades must be transformed into
+            # the coordinates of the center of the slit.
+            xval.append(xdata[:, 0])
 
-    return motor, np.array(steps), np.array(xval), [np.array(yval)], None
+        if isinstance(ydata, np.ndarray):
+            yval.append(float(ydata[0]))
+        else:
+            yval.append(float(ydata))
+
+    return dev_motor, np.array(steps), np.array(xval), [np.array(yval)], None
 
 
 #
 # Beam properties extraction methods and analysis.
 #
-def beam_from_scan(scandata, dev_motor, droi=4, analysis_mode='qck'):
+def beam_from_scan(datascan, droi=4, analysis_mode='qck'):
     """Return properties of the beam profiles from the datascan dict.
 
     Operates on a full scan, linking scanned variable value to beam
@@ -331,8 +348,7 @@ def beam_from_scan(scandata, dev_motor, droi=4, analysis_mode='qck'):
     from the `image_statistics` module.
 
     Args:
-        scandata (dict): Nested dict containing the set of one full scan.
-        dev_motor (str): The device and motor being scanned (e.g., 'sample.x').
+        datascan (dict): Nested dict containing the set of one full scan.
         droi (int): The half-size of the region around the centroid used to
             determine if the beam is visible. Default is 4 pixels.
         analysis_mode (str): what method to use for analyzing image properties,
@@ -347,22 +363,29 @@ def beam_from_scan(scandata, dev_motor, droi=4, analysis_mode='qck'):
     """
     beam_instances = {}
 
-    for step, data in scandata.items():
+    for step, dataset in datascan.items():
         # Extract scanning index and observable value.
         st = int(step.split('-')[-1])
 
         # Extract the scanned variable value for this step.
-        xval = float(_get_variable_metadata(data, dev_motor)[0])
+        values = _get_variable_values(dataset)
+
+        if values.ndim == 0:
+            xvals = float(values)
+        elif values.ndim == 1:
+            xvals = values[0]
+        else:
+            xvals = values[:, 0]
 
         # Get image data and calculate centroid.
-        img = data['dvf_B1']['data'].T
+        img = dataset['dvf_B1']['data'].T
         img_xedges = np.arange(img.shape[0]+1)
         img_yedges = np.arange(img.shape[1]+1)
 
         ana = Histogram2DAnalyzer(img,
-                                  xedges=img_xedges,
-                                  yedges=img_yedges,
-                                  droi=droi)
+                                  droi=droi,
+                                  x_bin_edges=img_xedges,
+                                  y_bin_edges=img_yedges)
 
         if not ana.beam_visible:
             continue
@@ -373,7 +396,7 @@ def beam_from_scan(scandata, dev_motor, droi=4, analysis_mode='qck'):
 
         # Return a dict linking scanned variable value to a H2DA
         # instance containing the image and its properties.
-        beam_instances[st] = [xval, ana]
+        beam_instances[st] = [xvals, ana]
 
         # Right now, as 'qck' is set as the default analysis mode, the
         # behaviour is the exact same as was previously implemented,
@@ -384,55 +407,50 @@ def beam_from_scan(scandata, dev_motor, droi=4, analysis_mode='qck'):
     return beam_instances
 
 
-def beam_centroid(datascan, dev_motor, droi=4, analysis_mode='qck'):
+def beam_centroid(beam_instances, analysis_mode='qck'):
     """Return centroids of the beam profiles from the data dict.
 
     Args:
-        datascan (dict): Nested dict containing the set of one full scan.
-        dev_motor (str): The device and motor being scanned
-            (e.g., 'mirror.rx').
-        droi (int): The half-size of the region around the centroid used to
-            determine if the beam is visible. Default is 4 pixels.
+        beam_instances (dict): A dict mapping step numbers to H2DA instances
+            containing the image and its properties.
         analysis_mode (str): The mode of analysis to use. Default is 'qck'.
 
     Returns:
         dict: A dict mapping scan numbers to (cx, cy) centroids.
     """
-    # Calculate beam properties for all scans.
-    beam_instances = beam_from_scan(datascan, dev_motor, droi, analysis_mode)
-
-    steps, xvals, centrs, sigmas  = [], [], [], []
+    steps, coordinates, centrs, sigmas  = [], [], [], []
     # for step, values in beam_instances.items():
     for step, (scanval, ana) in beam_instances.items():
         steps.append(step)
-        xvals.append(scanval)
+        sv = np.asarray(scanval)
+        if sv.ndim == 0:
+            coordinates.append(float(sv))
+        else:
+            # Take only the values, not the limits. This is the slits case,
+            # so the four values of the blades must be transformed into
+            # the coordinates of the center of the slit.
+            coordinates.append(sv[:, 0])
 
-        # ana = values[1]
         hprm = getattr(ana, f"hprm_{analysis_mode}")
         centrs.append([hprm['mux'], hprm['muy']])
         sigmas.append([hprm['sigx'], hprm['sigy']])
 
-    return (np.array(steps), np.array(xvals),
+    return (np.array(steps), np.array(coordinates),
             np.array(centrs), np.array(sigmas))
 
 
-def beam_fwhm(datascan, dev_motor, droi=4, analysis_mode='qck'):
+def beam_fwhm(beam_instances, analysis_mode='qck'):
     """Return fwhm of the beam profiles from the data dict.
 
     Args:
-        datascan (dict): Nested dict containing the set of one full scan
-            (one pass).
-        dev_motor (str): The device and motor being scanned (e.g., 'sample.x').
-        droi (int): The half-size of the region around the centroid used to
-            determine if the beam is visible. Default is 4 pixels.
+        beam_instances (dict): A dict mapping step numbers to H2DA instances
+            containing the image and its properties.
         analysis_mode (str): The mode of analysis to use. Default is 'qck'.
 
     Returns:
         fwhms (dict): A dict mapping scan numbers to (fx, fy) fwhm's.
     """
     fwhms = {}
-    beam_instances = beam_from_scan(datascan, dev_motor, droi, analysis_mode)
-
     for st in beam_instances.keys():
         xval   = beam_instances[st][0]
 
@@ -445,29 +463,23 @@ def beam_fwhm(datascan, dev_motor, droi=4, analysis_mode='qck'):
     return fwhms
 
 
-def beam_intensity(datascan, dev_motor, droi=4, analysis_mode='qck'):
+def beam_intensity(beam_instances, droi=8, expo_time=0.1, analysis_mode='qck'):
     """Return the total intensity of the beam profiles from the data dict.
 
     Args:
-        datascan (dict): Nested dict containing the set of one full scan
-            (one pass).
-        dev_motor (str): The device and motor being scanned (e.g., 'sample.x').
-        droi (int): The half-size of the region around the centroid used to
-            determine if the beam is visible. Default is 4 pixels.
+        beam_instances (dict): A dict mapping step numbers to H2DA instances
+            containing the image and its properties.
+        droi (int): region around the centroid to estimate intensity by
+                 averaging the peak.
+        expo_time (float): Exposure time of the image. Default is 0.1 seconds.
         analysis_mode (str): The mode of analysis to use. Default is 'qck'.
 
     Returns:
         dict: A dict mapping scan numbers to total intensity.
     """
-    beam_instances = beam_from_scan(datascan, dev_motor,
-                                    droi, analysis_mode)
-
     xvals = []
     peaks, intens_by_mask, peaks_by_fwhm = [], [], []
     for step in beam_instances.keys():
-        dstep = f"scan-{step:04d}"
-        exptime = datascan[dstep]['dvf_B1']['attrs']['expo_time']
-
         xval = beam_instances[step][0]
         ana  = beam_instances[step][1]
         hprm = getattr(ana, f"hprm_{analysis_mode}")
@@ -487,10 +499,10 @@ def beam_intensity(datascan, dev_motor, droi=4, analysis_mode='qck'):
         img_masked = np.where(mask, img, 0)
         area_img_masked = np.sum(img_masked)
 
-        intensity_by_mask = (area_img_masked / (area_mask * exptime)
+        intensity_by_mask = (area_img_masked / (area_mask * expo_time)
                              if area_mask != 0 else 0)
 
-        peak /= exptime
+        peak /= expo_time
         peak_fwhm_norm = (peak / (fwhm_x * fwhm_y)
                           if fwhm_x * fwhm_y != 0 else 0)
 
@@ -499,10 +511,6 @@ def beam_intensity(datascan, dev_motor, droi=4, analysis_mode='qck'):
         intens_by_mask.append(intensity_by_mask)
         peaks_by_fwhm.append(peak_fwhm_norm)
         # intensities[step] = [peak, intensity_by_mask, peak_fwhm_norm]
-
-    # DEBUG
-    # print(f"\n####\n (beam intensity) DROI = {droi}\n####\n")
-    # DEBUG
 
     intensities = [
         np.array(peaks),
@@ -520,7 +528,7 @@ def beam_intensity(datascan, dev_motor, droi=4, analysis_mode='qck'):
 #
 # Scan parameter extraction methods.
 #
-def _get_variable_metadata(data, dev_motor):
+def _get_variable_values(data, dev_motor=None):
     """Helper function to extract the variable metadata from the dataset.
 
     Args:
@@ -529,24 +537,25 @@ def _get_variable_metadata(data, dev_motor):
             (e.g., 'mirror.rx').
 
     Returns:
-        list: Metadata of the scanned variable: [value, lolm, hilm, enable].
+        np.ndarray: values of the scanned variable,
+             [value, lolm, hilm, enable].
     """
     # Separate device and motor from the input string.
-    device, motor = dev_motor.split('.')
 
-    try:
-        # First try to get data directly from the scan attributes.
-        if data['attrs'].get(dev_motor) is not None:
-            meta = data['attrs'].get(dev_motor)
-        # In the case of DVFs, the scanned variable is stored in
-        # the device group attributes.
-        elif data.get(device, None) is not None:
-            meta = data[device]['attrs'].get(motor)
-    except (KeyError, TypeError, ValueError) as err:
-        meta = None
-        raise ValueError(f"Could not extract scanned variable metadata"
-                         f"for {dev_motor}") from err
-    return meta
+    # Get scan name.
+    sname, sdev, smotor, dev_motor = _get_scan_names(data)
+
+    # Check for slits case.
+    if 'slit' in sname:
+        vals = []
+        for side in ['top', 'right', 'bottom', 'left']:
+            vals.append(data['attrs'].get(f"{sdev}.{side}"))
+        return np.array(vals)
+
+    # Motor is defined in other cases.
+    scanmotor = data['attrs'].get('scan_motor')
+    dev_motor = f"{sdev}.{scanmotor}"
+    return np.array(data['attrs'].get(dev_motor))
 
 
 # ==================================================
@@ -673,7 +682,8 @@ def centroid_x_delta_plot(dataset, motor, step_start=0, step_end=-1):
             )
         step_idx.append(len(step_idx))
 
-        steps, xvals, centroid, sigmas = beam_centroid(data, motor)
+        beam_instances = beam_from_scan(data)
+        steps, xvals, centroid, sigmas = beam_centroid(beam_instances)
         baseline_cx.append(centroid[step_start][0])
         final_cx.append(centroid[step_end][0])
 
@@ -733,7 +743,6 @@ def dataset_plot(ax, xvals, yvals, datakey, observable, motor,
     """Plot the behavior of an observable across steps for a single dataset."""
     # Plot the observable vs. step number for the given dataset.
     # for yval in yvals:
-
     if annotate_points:
         for i, (tx, yv) in enumerate(zip(xvals[first_item:last_item],
                                          yvals[first_item:last_item])):
@@ -871,10 +880,6 @@ def scan_plot(dataset, observables, first_item=0, last_item=None, droi=8):
                  if obs in observables])
     if 'intensity' in observables:
         nobs += 2
-
-    # DEBUG
-    # print(f"\n####\n#### Number of observables = {nobs}\n####\n")
-    # DEBUG
 
     nrows = max((nobs + 1) // 2, 1)
     ncols = 2 if nobs > 1 else 1
