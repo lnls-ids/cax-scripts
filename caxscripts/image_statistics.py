@@ -101,7 +101,8 @@ class Histogram2DAnalyzer:
         self.img               = np.asarray(img,    dtype=float)
         self.droi              = droi
         self.beam_visible      = None  # set by compute_quick()
-        self.hprm_qck          = None  # quick params: cx, cy, fwhm_x, fwhm_y, sig_x, sig_y
+        # quick params: cx, cy, fwhm_x, fwhm_y, sig_x, sig_y
+        self.hprm_qck          = None
         self.hprm_mom          = None  # moments params
         self.hprm_fit          = None  # fit params
         self.hprm              = None
@@ -140,10 +141,10 @@ class Histogram2DAnalyzer:
     def _qck_centroid(self, img=None):
         """Calculate beam centroid via smoothed projected sums.
 
-        Parameters:
+        Args:
             img: optional array to analyze instead of self.img
                 (e.g. self.img_thresholded).
-        
+
         Returns:
             np.array: [cx, cy] centroid coordinates.
         """
@@ -220,7 +221,7 @@ class Histogram2DAnalyzer:
 
         Sets self.beam_visible and self.hprm_qck if beam is visible.
 
-        Parameters:
+        Args:
             img: optional array to analyze instead of self.img
                 (e.g. self.img_thresholded).
 
@@ -254,12 +255,15 @@ class Histogram2DAnalyzer:
             "sigy"      : sigy,
             "fwhmx"     : fwhms[0],
             "fwhmy"     : fwhms[1],
-            "cov"       : np.diag([sigx**2, sigy**2]),  # no covariance in quick estimate
+            # no cov. in quick estimate
+            "cov"       : np.diag([sigx**2, sigy**2]),
             "sig_major" : max(sigx, sigy),
             "sig_minor" : min(sigx, sigy),
-            "theta"     : 0.5*np.pi*float(sigx<sigy),  # ellipse aligned to axes
-            "evecs"     : np.array([[1, 0], [0, 1]]),  # identity for quick estimate
-            "x_bin_centers"  : self.x_bin_centers, 
+            # ellipse aligned to axes
+            "theta"     : 0.5*np.pi*float(sigx < sigy),
+            # identity for quick estimate
+            "evecs"     : np.array([[1, 0], [0, 1]]),
+            "x_bin_centers"  : self.x_bin_centers,
             "y_bin_centers"  : self.y_bin_centers,
 
         }
@@ -666,20 +670,19 @@ class Histogram2DAnalyzer:
         )
 
         self.hprm_mom = {
-            "mux"       : mux, 
+            "mux"       : mux,
             "muy"       : muy,
             "cov"       : covmat,
-            "sigx"      : sigx, 
+            "sigx"      : sigx,
             "sigy"      : sigy,
-            "fwhmx"     : self.sigma_to_fwhm(sigx), 
+            "fwhmx"     : self.sigma_to_fwhm(sigx),
             "fwhmy"     : self.sigma_to_fwhm(sigy),
             "sig_major" : sig_major, 
             "sig_minor" : sig_minor,
-            "theta"     : self.adjust_angle(theta), 
+            "theta"     : self.adjust_angle(theta),
             "evecs"     : evecs,
-            "x_bin_centers"  : self.x_bin_centers, 
+            "x_bin_centers"  : self.x_bin_centers,
             "y_bin_centers"  : self.y_bin_centers,
-            
         }
         return self.hprm_mom
 

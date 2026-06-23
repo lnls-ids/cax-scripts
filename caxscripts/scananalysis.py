@@ -230,6 +230,8 @@ def observable_data(scandata, observable, droi=4):
                          one full scan (one pass).
         observable (str): The variable to extract (e.g.,
                           'photocollector', 'centroid').
+        droi (int): central region around the centroid to estimate intensity
+                        by averaging the peak.
 
     Returns:
         tuple: (motor, steps, xval, yval) where:
@@ -470,7 +472,7 @@ def beam_intensity(datascan, dev_motor, droi=4, analysis_mode='qck'):
         ana  = beam_instances[step][1]
         hprm = getattr(ana, f"hprm_{analysis_mode}")
 
-        if ana.beam_visible == False:
+        if not ana.beam_visible:
             continue
 
         img            = ana.img
@@ -499,9 +501,9 @@ def beam_intensity(datascan, dev_motor, droi=4, analysis_mode='qck'):
         # intensities[step] = [peak, intensity_by_mask, peak_fwhm_norm]
 
     # DEBUG
-    print(f"\n####\n (beam intensity) DROI = {droi}\n####\n")
+    # print(f"\n####\n (beam intensity) DROI = {droi}\n####\n")
     # DEBUG
-    
+
     intensities = [
         np.array(peaks),
         np.array(intens_by_mask),
@@ -851,7 +853,7 @@ def scan_plot(dataset, observables, first_item=0, last_item=None, droi=8):
     """Plot the behavior of an observable across scans for each dataset.
 
     Args:
-        data (dict): Nested dict containing the set of all passes.
+        dataset (dict): Nested dict containing the set of all passes.
         observables (list of str): The variables to plot
             (e.g., 'photocollector', 'centroid').
         first_item (int): The first point of the scan to be included in
@@ -859,6 +861,7 @@ def scan_plot(dataset, observables, first_item=0, last_item=None, droi=8):
             Default is 0 (include all points).
         last_item (int or None): The last point of the scan to be included
             in the plot. If None, include all points.
+        droi (int): central region defined by the user to average on.
     """
     # Determine the number of rows and columns for subplots based on
     # the number of observables.
@@ -867,7 +870,7 @@ def scan_plot(dataset, observables, first_item=0, last_item=None, droi=8):
     nobs += sum([1 for obs in ['centroid', 'fwhm']
                  if obs in observables])
     if 'intensity' in observables:
-        nobs += 2 
+        nobs += 2
 
     # DEBUG
     # print(f"\n####\n#### Number of observables = {nobs}\n####\n")
@@ -906,7 +909,9 @@ def scan_plot(dataset, observables, first_item=0, last_item=None, droi=8):
     if 'intensity' in observables:
         for key, data in dataset.items():
             (motor, steps,
-            xvals, yvals, sigmas) = observable_data(data, 'intensity', droi=droi)
+            xvals, yvals, sigmas) = observable_data(
+                data, 'intensity', droi=droi
+                )
             peaks, intens_by_mask, peak_by_fwhm = yvals
             dataset_plot(faxs[nextaxis], xvals, peaks, key,
                         "Peak", motor, first_item, last_item)
@@ -922,10 +927,14 @@ def scan_plot(dataset, observables, first_item=0, last_item=None, droi=8):
     for idx, observable in enumerate(observables):
         for key, data in dataset.items():
             (motor, steps,
-             xvals, yvals, sigmas) = observable_data(data, observable, droi=droi)
+             xvals, yvals, sigmas) = observable_data(data,
+                                                     observable,
+                                                     droi=droi)
             for yval in yvals:
-                dataset_plot(faxs[nextaxis+idx], xvals, yval, key, observable, motor,
-                            first_item, last_item)
+                dataset_plot(
+                    faxs[nextaxis+idx], xvals, yval, key,
+                    observable, motor, first_item, last_item
+                    )
 
     plt.show()
 
