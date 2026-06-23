@@ -381,11 +381,11 @@ class Histogram2DAnalyzer:
     # Scan-level helpers (for processing datasets).
     # ------------------------------------------------------------------
 
-    def _get_variable_metadata(self, scandata, dev_motor):
+    def _get_variable_metadata(self, DataScan, dev_motor):
         """Extract variable metadata from scan data.
 
         Args:
-            scandata: dict containing data for a single scan step.
+            DataScan: dict containing data for a single scan step.
             dev_motor: device and motor string (e.g., 'mirror.rx').
 
         Returns:
@@ -394,10 +394,10 @@ class Histogram2DAnalyzer:
         device, motor = dev_motor.split('.')
 
         try:
-            if scandata['attrs'].get(dev_motor) is not None:
-                meta = scandata['attrs'].get(dev_motor)
-            elif scandata.get(device, None) is not None:
-                meta = scandata[device]['attrs'].get(motor)
+            if DataScan['attrs'].get(dev_motor) is not None:
+                meta = DataScan['attrs'].get(dev_motor)
+            elif DataScan.get(device, None) is not None:
+                meta = DataScan[device]['attrs'].get(motor)
         except (KeyError, TypeError, ValueError) as err:
             raise ValueError(f"Could not extract metadata for {dev_motor}") from err
         return meta
