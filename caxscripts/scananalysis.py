@@ -452,7 +452,7 @@ def beam_fwhm(beam_instances, analysis_mode='qck'):
     """
     fwhms = {}
     for st in beam_instances.keys():
-        xval   = beam_instances[st][0]
+        xval = beam_instances[st][0]
 
         ana = beam_instances[st][1]
         hprm = getattr(ana, f"hprm_{analysis_mode}")
@@ -744,8 +744,10 @@ def dataset_plot(ax, xvals, yvals, datakey, observable, motor,
     # Plot the observable vs. step number for the given dataset.
     # for yval in yvals:
     if annotate_points:
-        for i, (tx, yv) in enumerate(zip(xvals[first_item:last_item],
-                                         yvals[first_item:last_item])):
+        for i, (tx, yv) in enumerate(
+            zip(xvals[first_item:last_item],  # noqa: B905
+            yvals[first_item:last_item])      # noqa: B905
+            ):
             ax.annotate(str(i), (tx, yv), textcoords='offset points',
                          xytext=(5, 5), fontsize=8)
     if last_item is None:
