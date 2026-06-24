@@ -32,9 +32,9 @@ import warnings
 import h5py
 import numpy as np
 import matplotlib.pyplot as plt
-from matplotlib.animation import FuncAnimation
-from IPython.display import HTML
-from IPython.display import display as ipydisplay
+from   matplotlib.animation import FuncAnimation
+from   IPython.display import HTML
+from   IPython.display import display as ipydisplay
 
 from scipy.optimize import curve_fit
 
@@ -121,14 +121,16 @@ def _scan_variable_from_metadata(metadata, scan_type, scan_device, scan_motor,
     (so the caller can override a mis-matched ``scan_device`` attribute).
     """
     if scan_type == _SCAN_TYPE_SLIT:
-        dev = blade_device or scan_device
+        dev    = blade_device or scan_device
         top    = _extract_metadata_value(metadata.get(f'{dev}.top',    0))
         bottom = _extract_metadata_value(metadata.get(f'{dev}.bottom', 0))
         left   = _extract_metadata_value(metadata.get(f'{dev}.left',   0))
         right  = _extract_metadata_value(metadata.get(f'{dev}.right',  0))
-        cx = (left + right) / 2
-        cy = (top + bottom) / 2
-        return (cx, cy)
+        
+        # @Arnaldo, I'm not sure this calculation of slit center is correct.
+        slit_center_x = (left + right) / 2
+        slit_center_y = (top + bottom) / 2
+        return (slit_center_x, slit_center_y)
 
     dev_motor = f'{scan_device}.{scan_motor}'
     val = metadata.get(dev_motor)
@@ -248,12 +250,12 @@ class DataStep:
                  scan_type=None, scan_device=None, scan_motor=None,
                  analysis_mode='quick', droi=4, exptime=1.0,
                  blade_device=None):
-        self.step_index = step_index
-        self.metadata = metadata
-        self.image_secondary = image_secondary
+        self.step_index          = step_index
+        self.metadata            = metadata
+        self.image_secondary     = image_secondary
         self.scan_variable_value = None
-        self.beam_properties = None
-        self.analyzer = None
+        self.beam_properties     = None
+        self.analyzer            = None
 
         self.scan_variable_value = _scan_variable_from_metadata(
             metadata, scan_type, scan_device, scan_motor,
@@ -261,7 +263,7 @@ class DataStep:
         )
 
         if image is not None:
-            img_arr = np.asarray(image, dtype=float)
+            img_arr = np.asarray(image.T, dtype=float)
             nx, ny = img_arr.shape
             xedges = np.arange(nx + 1)
             yedges = np.arange(ny + 1)
@@ -824,7 +826,7 @@ class DataScan:
         ax_img = axes[0]
 
         # Image plotting
-        im = ax_img.imshow(images[0], cmap='viridis', animated=True)
+        im = ax_img.imshow(images[0].T, cmap='viridis', animated=True)
         plt.colorbar(im, ax=ax_img, label='Intensity')
         ax_img.set_xlabel('Pixel X')
         ax_img.set_ylabel('Pixel Y')
@@ -859,7 +861,7 @@ class DataScan:
             ax_tr.grid(True)
 
         def update(frame):
-            im.set_data(images[frame])
+            im.set_data(images[frame].T)
             im.set_clim(images[frame].min(), images[frame].max())
             img_title.set_text(f'Step {frame}')
             for j, mk in enumerate(trace_markers):
@@ -1187,7 +1189,7 @@ class DataSet:
         fig, ax
         """
         fig, ax = plt.subplots(figsize=(10, 6))
-        scans = self._scans_in_range()
+        scans   = self._scans_in_range()
 
         for scan in scans:
             scan.step_range = self.step_range
