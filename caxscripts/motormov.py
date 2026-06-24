@@ -206,12 +206,13 @@ class CAXSlitMove:
 
     def __init__(self, caxctrl, devname='slit_A1'):
         """."""
-        self.cax        = caxctrl
-        self.devname    = devname
-        self.device     = getattr(self.cax, devname)
-        self.dev_status = utils.snapshot_machine_state(self.cax)
-        self.slit_image = self.dev_status['dvf_A1']['image']
-        self.results    = None
+        self.cax            = caxctrl
+        self.devname        = devname
+        self.device         = getattr(self.cax, devname)
+        self.dev_status     = utils.snapshot_machine_state(self.cax)
+        self.slit_image     = self.dev_status['dvf_A1']['image']
+        self.results        = None
+        self.saturation_val = self.cax.dvf_B1.intensity_saturation_value
 
     def device_status(self):
         """Show initial statuts of mirror."""
@@ -297,6 +298,19 @@ class CAXSlitMove:
 
         return step
     
+    def _calc_peak(self, droi=4):
+        cx = self.cax.dvf_B1.roix_center
+        cy = self.cax.dvf_B1.roiy_center
+        img = self.cax.dvf_B1.image
+        return np.mean(img[cy-droi:cy+droi, cx-droi:cx+droi])
+
+
+    def _adjust_expo_time(self):
+        expo_time  = self.cax.dvf_B1.exposure_time
+        image_peak = self._calc_peak()
+        
+
+
     def device_scan(self, scanargs, h5file=None):
         """Scan slit positions and return collected data.
 
@@ -325,14 +339,18 @@ class CAXSlitMove:
                                            
         step_idx = 1
 
-        for j, topp in enumerate(top):
-           for i, leftp in enumerate(left):
+        for j, top_pos in enumerate(top):
+           for i, left_pos in enumerate(left):
                 print(f"Step: Row {i+1}/{len(left)},"
                       f" Col {j+1}/{len(top)} -"
-                      f" slit center ({leftp:.3f}, {topp:.3f})")
+                      f" slit center ({left_pos:.3f}, {top_pos:.3f})")
 
-                self.set_slit_all(topp, bottom[j], leftp, right[i])
+                self.set_slit_all(top_pos, bottom[j], left_pos, right[i])
                 time.sleep(scanargs.get('dtime', 0))
+
+                # here goes the logic to adjust exposure time
+                # self.cax.dvf_B1.expo_time = ...
+                self._adjust_expo_time()
 
                 try:
                     self._step_update_and_save(h5file, slit, step_idx,
