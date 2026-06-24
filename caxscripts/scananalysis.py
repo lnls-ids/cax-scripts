@@ -1803,7 +1803,7 @@ def caustic_analysis(filename, filedir):
     causticy = np.sum(caustic3d, axis=2).T
     fwhmsx = [utils.full_width(data=profilex, coords=positions)[0]
               for profilex in causticx.T]
-    fwhm.sy = [utils.full_width(data=profiley, coords=positions)[0]
+    fwhmsy = [utils.full_width(data=profiley, coords=positions)[0]
               for profiley in causticy.T]
     causticx_params, _ = curve_fit(utils.caustic_func, positions, fwhmsx,
                                    p0=None)
