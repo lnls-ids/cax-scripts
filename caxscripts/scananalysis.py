@@ -64,11 +64,11 @@ _SCAN_TYPE_CAUSTIC = 'caustic'
 #  Helper utilities
 # ===========================================================================
 
-def _extract_metadata_value(meta):
+def _extract_metadata_value(val):
     """Return a scalar float from a metadata entry (array, list, or scalar)."""
-    if isinstance(meta, (list, np.ndarray)):
-        return float(meta[0])
-    return float(meta)
+    if isinstance(val, (list, np.ndarray)):
+        return float(val[0])
+    return float(val)
 
 
 def _find_slit_blade_device(metadata_list, scan_device):
@@ -161,20 +161,20 @@ def _build_beam_properties(analyzer, analysis_mode, exptime=1.0, droi=4):
     if hprm is None:
         return None
 
-    cx, cy = hprm['mux'], hprm['muy']
-    fx, fy = hprm['fwhmx'], hprm['fwhmy']
-    sx, sy = hprm['sigx'], hprm['sigy']
+    mu_x, mu_y = hprm['mux'], hprm['muy']
+    f_x, f_y     = hprm['fwhmx'], hprm['fwhmy']
+    s_x, s_y     = hprm['sigx'], hprm['sigy']
 
     props = {
-        'centroid':   (cx, cy),
-        'centroid_x': cx,
-        'centroid_y': cy,
-        'fwhm':       (fx, fy),
-        'fwhm_x':     fx,
-        'fwhm_y':     fy,
-        'sigma':      (sx, sy),
-        'sigma_x':    sx,
-        'sigma_y':    sy,
+        'centroid':   (mu_x, mu_y),
+        'centroid_x': mu_x,
+        'centroid_y': mu_y,
+        'fwhm':       (f_x, f_y),
+        'fwhm_x':     f_x,
+        'fwhm_y':     f_y,
+        'sigma':      (s_x, s_y),
+        'sigma_x':    s_x,
+        'sigma_y':    s_y,
         'beam_visible': analyzer.beam_visible,
     }
 
@@ -185,10 +185,11 @@ def _build_beam_properties(analyzer, analysis_mode, exptime=1.0, droi=4):
 
     # Intensity calculations (three methods).
     img = analyzer.img
+    cx, cy = int(mu_x), int(mu_y)
     peak = np.mean(img[cx - droi:cx + droi + 1,
                        cy - droi:cy + droi + 1])
     peak /= exptime
-    peak_fwhm_norm = peak / (fx * fy) if fx * fy != 0 else 0
+    peak_fwhm_norm = peak / (f_x * f_y) if f_x * f_y != 0 else 0
 
     mask = img > (peak * exptime / 2)
     area_mask = np.sum(mask)
@@ -246,13 +247,13 @@ class DataStep:
         Exposure time in seconds (used for intensity normalisation).
     """
 
-    def __init__(self, step_index, metadata, image=None, image_secondary=None,
+    def __init__(self, step_index, metadata, image=None, image_slit=None,
                  scan_type=None, scan_device=None, scan_motor=None,
                  analysis_mode='quick', droi=4, exptime=1.0,
                  blade_device=None):
         self.step_index          = step_index
         self.metadata            = metadata
-        self.image_secondary     = image_secondary
+        self.image_slit          = image_slit
         self.scan_variable_value = None
         self.beam_properties     = None
         self.analyzer            = None
@@ -1133,7 +1134,7 @@ class DataSet:
                 step_index=step_idx,
                 metadata=step_attrs,
                 image=image_b1,               # primary: DVF B1
-                image_secondary=image_a1,     # secondary: DVF A1
+                image_slit=image_a1,     # secondary: DVF A1
                 scan_type=scan_name,
                 scan_device=scan_device,
                 scan_motor=scan_motor,
