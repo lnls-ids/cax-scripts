@@ -299,15 +299,71 @@ class CAXSlitMove:
         return step
     
     def _calc_peak(self, droi=4):
+        """
+        Fetch image peak from dvf_B1
+        """
         cx = self.cax.dvf_B1.roix_center
         cy = self.cax.dvf_B1.roiy_center
         img = self.cax.dvf_B1.image
         return np.mean(img[cy-droi:cy+droi, cx-droi:cx+droi])
 
-
     def _adjust_expo_time(self):
+        """
+        Method to adjust DVF exposure time so the image peak lies at 80% of
+        the saturation threshold.
+        """
         expo_time  = self.cax.dvf_B1.exposure_time
         image_peak = self._calc_peak()
+
+        # 80% of saturation value 
+        rel_expo_limit = 0.8
+        expo_limit = rel_expo_limit * self.saturation_val
+
+        # 5% error accepted
+        rel_acceptance   = 0.05
+
+        # Iteration limit
+        it = 0
+
+        delta_P = expo_limit - image_peak
+
+        # peak at 80% ± 5% of saturation value
+        while (np.abs(delta_P) / expo_limit > rel_acceptance) and (it < 10):
+            
+            # 10% increase in exposure
+            d_tau = expo_time * 0.1
+            self.dvf_B1.exposure_time = expo_time + d_tau
+            
+            # Wait for the image to readjust
+            time.sleep(0.2)
+            if not self.cax.dvf_B1.is_saturated:
+                varied_peak = self._calc_peak()
+                
+                # 𝜕τ/𝜕P
+                tau_peak_ratio = d_tau / (varied_peak - image_peak)
+
+                # Assuming linearity: τ* = (𝜕τ/𝜕P) ΔP
+                new_expo = expo_time + tau_peak_ratio * delta_P
+            else:
+                # Image saturated, backtrack d_tau
+                new_expo = expo_time - d_tau
+
+            # Set new exposure time
+            self.cax.dvf_B1.exposure_time = new_expo
+
+            # Wait for the image to readjust
+            time.sleep(0.2)
+
+            expo_time  = self.cax.dvf_B1.exposure_time
+            image_peak = self._calc_peak()  
+            delta_P    = expo_limit - image_peak 
+
+            it += 1
+
+        return expo_time, image_peak, delta_P
+
+
+
         
 
 
@@ -329,6 +385,8 @@ class CAXSlitMove:
         right   = scanargs['right_pos']
         winsize = scanargs['winsize']
 
+        initial_expo_time = self.cax.dvf_B1.exposure_time
+
         self.results = []
         t0 = time.time()
 
@@ -349,7 +407,6 @@ class CAXSlitMove:
                 time.sleep(scanargs.get('dtime', 0))
 
                 # here goes the logic to adjust exposure time
-                # self.cax.dvf_B1.expo_time = ...
                 self._adjust_expo_time()
 
                 try:
@@ -363,7 +420,9 @@ class CAXSlitMove:
                 step_idx += 1
 
         # Return to initial slit positions after scan.
+        # Also reset exposure time
         self.set_slit_all(*scanargs['slit_initial_status'])
+        self.cax.dvf_B1.exposure_time = initial_expo_time
         try:
             self._step_update_and_save(h5file, slit, step_idx,
                                        (None, None, winsize),
