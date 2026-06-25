@@ -1,6 +1,6 @@
 """Parameters and constants for Carcara scripts."""
 
-from siriuspy.devices import CAXCtrl
+from siriuspy.devices import CAXCtrl  # type: ignore
 
 
 class Config:

@@ -3,12 +3,15 @@
 All functionality lives inside Histogram2DAnalyzer:
 
   Construction
-  - Histogram2DAnalyzer(img, x_bin_edges, y_bin_edges)  — from an existing histogram.
-  - Histogram2DAnalyzer.from_gaussian(...)     — generate a Gaussian histogram.
+  - Histogram2DAnalyzer(img, x_bin_edges, y_bin_edges)
+            — from an existing histogram.
+  - Histogram2DAnalyzer.from_gaussian(...)
+            — generate a Gaussian histogram.
 
   Quick Analysis (run on init)
-  - compute_quick()         — compute quick beam params (centroid, FWHM, visibility).
-  - beam_visible          — attribute: whether beam is visible.
+  - compute_quick()     — compute quick beam params
+                        (centroid, FWHM visibility).
+  - beam_visible        — attribute: whether beam is visible.
   - hprm_qck            — attribute: quick parameters dict.
 
   Full Analysis
@@ -22,7 +25,8 @@ All functionality lives inside Histogram2DAnalyzer:
   - plot_entropy(entropies, bin_edges, optimal_threshold)
 
   Orchestration
-  - analyze(mode)        — run analysis pipeline; mode in ('quick', 'moments', 'fit', 'all').
+  - analyze(mode)        — run analysis pipeline;
+                           mode in ('quick', 'moments', 'fit', 'all').
 """
 
 import numpy as np
@@ -103,9 +107,9 @@ class Histogram2DAnalyzer:
         self.droi              = droi
         self.beam_visible      = None  # set by compute_quick()
         # quick params: cx, cy, fwhm_x, fwhm_y, sig_x, sig_y
-        self.hprm_qck          = None
-        self.hprm_mom          = None  # moments params
-        self.hprm_fit          = None  # fit params
+        self.hprm_project      = None
+        self.hprm_momenta      = None  # momenta params
+        self.hprm_fitting      = None  # fitting params
         self.hprm              = None
         self.optimal_threshold = np.max(img) * 0.1
         self.img_thresholded   = None
@@ -113,7 +117,7 @@ class Histogram2DAnalyzer:
         self._bin_centers(x_bin_edges, y_bin_edges)
 
         # Run quick analysis automatically
-        self.compute_quick()
+        self.parameters_from_projections()
 
     # ------------------------------------------------------------------
     # Quick analysis block (run on init).
@@ -137,14 +141,14 @@ class Histogram2DAnalyzer:
         ratio = roi_avg / mean if mean != 0 else 0
         return ratio >= PEAK2AVG_THRESHOLD
 
-    def _qck_centroid(self):
+    def _centroid_from_projection(self):
         """Calculate beam centroid via smoothed projected sums.
 
         Returns:
             np.array: [cx, cy] centroid coordinates.
         """
-        # image is being transposed before being attributed to the class 
-        # then, its shape is (nx, ny) and the x projection is along axis=1, 
+        # image is being transposed before being attributed to the class
+        # then, its shape is (nx, ny) and the x projection is along axis=1,
         # while the y projection along axis=0
         cx_sum = np.sum(self.img, axis=1)
         cy_sum = np.sum(self.img, axis=0)
@@ -152,7 +156,7 @@ class Histogram2DAnalyzer:
         ysmooth = savgol_filter(cy_sum, window_length=21, polyorder=2)
         return np.array([np.argmax(xsmooth), np.argmax(ysmooth)])
 
-    def _qck_fwhm(self, cx, cy, img=None):
+    def _fwhm_from_projection(self, cx, cy, img=None):
         """Calculate beam FWHM via half-max threshold.
 
         Args:
@@ -185,7 +189,7 @@ class Histogram2DAnalyzer:
 
     @staticmethod
     def fwhm_to_sigma(fwhm):
-        """Convert FWHM to sigma (alias for _qck_sigma).
+        """Convert FWHM to sigma.
 
         Args:
             fwhm: FWHM value(s).
@@ -210,8 +214,8 @@ class Histogram2DAnalyzer:
             theta_wrapped -= 2 * np.pi
         return theta_wrapped
 
-    def compute_quick(self):
-        """Compute quick beam parameters automatically on init.
+    def parameters_from_projections(self):
+        """Compute beam parameters from projections automatically.
 
         Sets self.beam_visible and self.hprm_qck if beam is visible.
 
@@ -230,18 +234,19 @@ class Histogram2DAnalyzer:
         if self.y_bin_edges.size != ny + 1:
             raise ValueError("y_bin_edges length must be img.shape[1] + 1.")
 
-        cx, cy = self._qck_centroid()
+        cx, cy = self._centroid_from_projection()
         self.beam_visible = self._compute_beam_visibility(cx, cy)
 
         if not self.beam_visible:
             import warnings
-            warnings.warn("Beam not visible; skipping quick analysis.")
+            warnings.warn("Beam not visible; skipping quick analysis.",
+                          stacklevel=2)
             return None
 
-        fwhms = self._qck_fwhm(cx, cy)
-        sigx = self.fwhm_to_sigma(fwhms[0])
-        sigy = self.fwhm_to_sigma(fwhms[1])
-        self.hprm_qck = {
+        fwhms = self._fwhm_from_projection(cx, cy)
+        sigx  = self.fwhm_to_sigma(fwhms[0])
+        sigy  = self.fwhm_to_sigma(fwhms[1])
+        self.hprm_project = {
             "mux"       : cx,
             "muy"       : cy,
             "sigx"      : sigx,
@@ -260,7 +265,7 @@ class Histogram2DAnalyzer:
             "y_bin_centers"  : self.y_bin_centers,
 
         }
-        return self.hprm_qck
+        return self.hprm_project
 
     def analyze(self, mode='all', warn=True):
         """Run analysis pipeline.
@@ -273,21 +278,22 @@ class Histogram2DAnalyzer:
             dict with results based on mode.
         """
         if mode == 'quick':
-            return self.compute_quick()
+            return self.parameters_from_projections()
 
         if not self.beam_visible:
             if warn:
                 import warnings
                 warnings.warn(
                     f"Beam not visible (mode={mode}); "
-                    "skipping advanced analysis."
+                    "skipping advanced analysis.",
+                    stacklevel=2
                 )
             return None
 
         result = {}
 
         if mode in ('moments', 'all'):
-            result['moments'] = self.compute_moments()
+            result['moments'] = self.compute_momenta()
 
         if mode in ('fit', 'all'):
             result['fit'] = self.fit()
@@ -387,19 +393,19 @@ class Histogram2DAnalyzer:
             list: [value, lolm, hilm, enable].
         """
         device, motor = dev_motor.split('.')
+        if meta := scandata['attrs'].get(dev_motor, None) is not None:
+            return meta
 
-        try:
-            if scandata['attrs'].get(dev_motor) is not None:
-                meta = scandata['attrs'].get(dev_motor)
-            elif scandata.get(device, None) is not None:
-                meta = scandata[device]['attrs'].get(motor)
-        except (KeyError, TypeError, ValueError) as err:
-            raise ValueError(f"Could not extract metadata for {dev_motor}") from err
-        return meta
+        if meta := scandata.get(device, None) is not None:
+            return meta
 
-    # Obsolete:  this shouldn't be here, as `Histogram2DAnalyzer` is a class 
+        if meta is None:
+            raise ValueError(f"Could not extract metadata for {dev_motor}")
+
+    # Obsolete:  this shouldn't be here, as `Histogram2DAnalyzer` is a class
     # concerned solely with single scan steps.
-    def beam_properties(self, dataset, dev_motor, threshold=PEAK2AVG_THRESHOLD):
+    def beam_properties(self, dataset, dev_motor,
+                        threshold=PEAK2AVG_THRESHOLD):
         """Return beam properties from a full scan dataset.
 
         Args:
@@ -417,17 +423,27 @@ class Histogram2DAnalyzer:
             sc = int(scan.split('-')[-1])
             img = data['dvf_B1']['data']
 
-            cx, cy = self._qck_centroid()
+            cx, cy = self._centroid_from_projection()
 
             if not self._compute_beam_visibility(cx, cy):
                 continue
 
-            xval = float(self._get_variable_metadata(data, dev_motor)[0])
-            fwhms = self._qck_fwhm(cx, cy)
-            sigmas = self._qck_sigma(fwhms)
-            exptime = data['dvf_B1']['attrs']['expo_time']
+            try:
+                meta = self._get_variable_metadata(data, dev_motor)
+                if isinstance(meta, list) and len(meta) > 0:
+                    xval = float(meta[0])
+                elif isinstance(meta, (int, float)):
+                    xval = float(meta)
+                else:
+                    raise ValueError(f"Unexpected metadata format: {meta}")
+            except Exception as err:
+                print(f" WARNING (beam_properties) : {err}")
+                continue
+            fwhms       = self._fwhm_from_projection(cx, cy)
+            sigmas      = self.fwhm_to_sigma(fwhms)
+            expo_time   = data['dvf_B1']['attrs']['expo_time']
             intensities = self.qck_intensity(img, [cx, cy], fwhms,
-                                             exptime, threshold)
+                                             expo_time, threshold)
 
             beam_props[sc] = [xval, [cx, cy], fwhms, sigmas, intensities]
             beam_imgs[sc] = img
@@ -476,6 +492,7 @@ class Histogram2DAnalyzer:
         """Create an analyzer from a randomly sampled Gaussian distribution.
 
         Arguments:
+            cls: Histogram2DAnalyzer class.
             bins: number of bins along each axis.
             size: number of samples to draw.
             mean: 2-element mean vector.
@@ -490,7 +507,7 @@ class Histogram2DAnalyzer:
         hist, x_bin_edges, y_bin_edges = np.histogram2d(
             samples[:, 0], samples[:, 1], bins=bins, range=hist_range
         )
-        return cls(hist, x_bin_edges, y_bin_edges)
+        return cls(hist, x_bin_edges=x_bin_edges, y_bin_edges=y_bin_edges)
 
     # ------------------------------------------------------------------
     # Preprocessing.
@@ -541,7 +558,8 @@ class Histogram2DAnalyzer:
             covmat: 2x2 covariance matrix.
             (mux, muy): means.
         """
-        xg, yg = np.meshgrid(self.x_bin_centers, self.y_bin_centers, indexing="ij")
+        xg, yg = np.meshgrid(self.x_bin_centers, self.y_bin_centers,
+                             indexing="ij")
         wsum = weight.sum()
         if wsum <= 0:
             raise ValueError("Total weight must be positive.")
@@ -640,15 +658,15 @@ class Histogram2DAnalyzer:
     # Public pipeline methods.
     # ------------------------------------------------------------------
 
-    def compute_moments(self, img=None):
-        """Compute weighted moments and principal-axis info.
+    def compute_momenta(self, img=None):
+        """Compute weighted momenta and principal-axis info.
 
         Arguments:
             img: optional array to analyse instead of self.img
                 (e.g. self.img_thresholded).
 
         Returns:
-            hprm: moments dictionary; also stored in self.hprm.
+            hprm: momenta dictionary; also stored in self.hprm.
         """
         img = self.img if img is None else np.asarray(img, dtype=float)
         if img.ndim != 2:
@@ -666,7 +684,7 @@ class Histogram2DAnalyzer:
             covmat
         )
 
-        self.hprm_mom = {
+        self.hprm_momenta = {
             "mux"       : mux,
             "muy"       : muy,
             "cov"       : covmat,
@@ -674,14 +692,14 @@ class Histogram2DAnalyzer:
             "sigy"      : sigy,
             "fwhmx"     : self.sigma_to_fwhm(sigx),
             "fwhmy"     : self.sigma_to_fwhm(sigy),
-            "sig_major" : sig_major, 
+            "sig_major" : sig_major,
             "sig_minor" : sig_minor,
             "theta"     : self.adjust_angle(theta),
             "evecs"     : evecs,
             "x_bin_centers"  : self.x_bin_centers,
             "y_bin_centers"  : self.y_bin_centers,
         }
-        return self.hprm_mom
+        return self.hprm_momenta
 
     def fit(self, hprm=None, img=None, useroi=True):
         """Fit a 2D Gaussian to self.img via nonlinear least squares.
@@ -699,16 +717,21 @@ class Histogram2DAnalyzer:
             hprm: fitted parameters dictionary; also stored in self.hprm.
         """
         if hprm is None:
-            if self.hprm_mom is None:
-                self.compute_moments()
-            hprm = self.hprm_mom
+            if self.hprm_momenta is None:
+                self.compute_momenta()
+            hprm = self.hprm_momenta
+
+        # This is a workaround for Pylance, since the clauses above
+        # guarantee hprm is calculated.
+        if hprm is None:
+            raise ValueError("No initial parameters available for fitting.")
 
         # Default to self.img if no alternative is provided.
         if img is None:
             img = self.img
 
-
-        xg, yg = np.meshgrid(self.x_bin_centers, self.y_bin_centers, indexing="ij")
+        xg, yg = np.meshgrid(self.x_bin_centers, self.y_bin_centers,
+                             indexing="ij")
 
         # Normalize to PDF so amplitude matches the normalized Gaussian.
         dx = self.x_bin_centers[1] - self.x_bin_centers[0]
@@ -746,7 +769,7 @@ class Histogram2DAnalyzer:
         (sig_major, sig_minor,
          theta, evecs) = self._ellipse_params_from_cov(covmat)
 
-        self.hprm_fit = {
+        self.hprm_fitting = {
             "mux"       : popt[0],
             "muy"       : popt[1],
             "sigx"      : sx,
@@ -761,7 +784,7 @@ class Histogram2DAnalyzer:
             "x_bin_centers"  : self.x_bin_centers,
             "y_bin_centers"  : self.y_bin_centers,
         }
-        return self.hprm_fit
+        return self.hprm_fitting
 
     def compute_threshold(self):
         """Run Kapur entropy thresholding on self.img.
@@ -785,8 +808,8 @@ class Histogram2DAnalyzer:
         thr = thrs[np.argmax(entropies)]
 
         self.optimal_threshold = thr
-        self.img_thresholded = np.where(self.img > thr, 
-                                        self.img - self.optimal_threshold, 
+        self.img_thresholded = np.where(self.img > thr,
+                                        self.img - self.optimal_threshold,
                                         0.0)
         return entropies, bin_edges, thr, nbins
 
@@ -798,7 +821,7 @@ class Histogram2DAnalyzer:
                   hprm_qck -> hprm_mom -> hprm_fit.
         """
         if hprm is None:
-            hprm = self.hprm_qck or self.hprm_mom or self.hprm_fit
+            hprm = self.hprm_project or self.hprm_momenta or self.hprm_fitting
         if hprm is None:
             print("No parameters computed.")
             return
@@ -855,7 +878,7 @@ class Histogram2DAnalyzer:
         """Plot the histogram with sigma ellipses and principal directions.
 
         Arguments:
-            hprm         : moments/fit dict; defaults to self.hprm_mom.
+            hprm         : momenta/fit dict; defaults to self.hprm_momenta.
             fig          : optional figure to plot on; created if None.
             ax           : optional axis to plot on; created if None.
             title        : axes title.
@@ -868,10 +891,14 @@ class Histogram2DAnalyzer:
             fig, ax
         """
         if hprm is None:
-            print("No parameters provided; using the calculated from moments.")
-            if self.hprm_mom is None:
-                self.compute_moments()
-            hprm = self.hprm_mom
+            if self.hprm_momenta is None:
+                self.compute_momenta()
+            hprm = self.hprm_momenta
+
+        # This is a workaround for Pylance, since the clauses above
+        # guarantee hprm is calculated.
+        if hprm is None:
+            raise ValueError("No initial parameters available for fitting.")
 
         if ax is None:
             fig, ax = plt.subplots(figsize=(10, 6))

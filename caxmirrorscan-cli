@@ -127,7 +127,7 @@ def status_show(cax):
                 # print(f"{vs[0]:12.6f}, enabled = {enbl}")
             print("\n")
         except Exception as err:
-            print(f" WARNING (status show) : {err} ({pv})")
+            print(f" WARNING (status show) : {err}")
             # for bl, v in val.items():
             #     print(f"  * {bl:15} : {v}")
     print("\n#####\n")
@@ -136,17 +136,23 @@ def status_show(cax):
 
 
 def _ask_val(prompt, limits):
+    """Ask a question and return the answer as a float."""
+    # Repeat until a valid value is entered or the user chooses to quit.
     while True:
+        value = input(prompt)
+        # Quit.
+        if value == 'q':
+            print("Exiting... Done.")
+            exit(0)
+
+        # Validate the input value.
         try:
-            value = float(input(prompt))
+            value = float(value)
             if not (limits[0] <= value <= limits[1]):
                 print(f"Value must be within limits: {limits}\n")
                 continue
             return value
         except ValueError:
-            if value == 'q':
-                print("Exiting... Done.")
-                exit(0)
             print("Invalid input. Please enter a numeric value.\n")
 
 
