@@ -383,7 +383,7 @@ class DataScan:
         self.analysis_mode = analysis_mode
         self._droi         = _droi 
         self.observables   = []
-        self.step_range    = None       # (start, end) tuple for slicing
+        self.step_range    = slice(0, None)  # slice for selecting steps
 
         self._load(scan_dict)
     # ------------------------------------------------------------------
@@ -456,19 +456,15 @@ class DataScan:
         print(f"  steps    : {len(self.steps)}")
         obs = self.available_observables
         print(f"  observables ({len(obs)}):")
-        for o in obs: print("\t"+o, end=";\n")
+        for o in obs: 
+            print("\t"+o, end=";\n")
 
     # ------------------------------------------------------------------
     #  Internal data helpers
     # ------------------------------------------------------------------
 
     def _steps_in_range(self):
-        if self.step_range is None:
-            return self.steps
-        start, end = self.step_range
-        if end == -1:
-            return self.steps[start:]
-        return self.steps[start:end]
+        return self.steps[self.step_range]
 
     def _get_observable_value(self, step, observable):
         """Return the scalar value of *observable* for a single step."""
@@ -502,12 +498,15 @@ class DataScan:
         xvals : np.ndarray
             Scanned-variable value for each step.
         yvals : np.ndarray or list of np.ndarray
+            Observable values or list of observable values
+        ylabels : str or list
+            observable names or list of observable components
         """
         if observable in _COMPONENT_MAP:
             components = _COMPONENT_MAP[observable]
             results = [self.resolve_observable(c) for c in components]
             # Returns xvals (np.ndarray) and yvals (list[np.ndarray])
-            return results[0][0], [r[1] for r in results]
+            return results[0][0], [r[1] for r in results], [r[2] for r in results]
 
         steps = self._steps_in_range()
         xvals = np.array([
@@ -518,7 +517,7 @@ class DataScan:
         ])
         yvals = np.array([self._get_observable_value(step, observable)
                           for step in steps])
-        return xvals, yvals
+        return xvals, yvals, observable
 
     # ------------------------------------------------------------------
     #  Plotting
@@ -537,12 +536,10 @@ class DataScan:
         observables : list of str or None
             If None, uses ``self.observables``.
         first_item : int
-            First step index to include, **relative to the** ``step_range``
-            window.  E.g. ``step_range=(2, 10)`` + ``first_item=1`` means
-            steps 3–9 are plotted.
+            First step index to include.  Resets ``self.step_range``
+            to ``slice(first_item, last_item)``.
         last_item : int or None
-            Last step index (exclusive).  None = all remaining steps in
-            the ``step_range`` window.
+            Last step index (exclusive).  None = all remaining steps.
         droi : int
             ROI half-size (used by some analysis steps).
 
@@ -550,13 +547,15 @@ class DataScan:
         -------
         fig, axs
         """
+        if first_item != 0 or last_item is not None:
+            self.step_range = slice(first_item, last_item)
+
         if self.scan_type == _SCAN_TYPE_SLIT:
             raise NotImplementedError()
-            # return self._plot_slit(observables, first_item, last_item)
 
-        return self._plot_default(observables, first_item, last_item)
+        return self._plot_default(observables)
 
-    def _plot_default(self, observables, first_item=0, last_item=None):
+    def _plot_default(self, observables):
         """Standard line-plot layout for mirror / general scans."""
         observable_names = observables if observables is not None \
                            else self.observables
@@ -567,6 +566,9 @@ class DataScan:
         all_observables = []
         for obs in observable_names:
             all_observables.extend(_COMPONENT_MAP.get(obs, [obs]))
+
+        steps = self._steps_in_range()
+        step_labels = [str(s.step_index) for s in steps]
 
         # Setting up plot parameters
         n_plots = len(all_observables)
@@ -584,21 +586,28 @@ class DataScan:
                      if self.scan_variable and '.' in self.scan_variable
                      else self.scan_variable or 'step')
 
+        print(all_observables)
+
         for i, obs_name in enumerate(all_observables):
             ax = ax_flat[i]
-            xvals, yvals = self.resolve_observable(obs_name)
-            sl = slice(first_item, last_item)
-            x_sliced = xvals[sl]
+            xvals, yvals, ylabels = self.resolve_observable(obs_name)
+
+            print(ylabels)
 
             # Multi component observables
             if isinstance(yvals, list):
-                for yvals_i in yvals:
-                    y_sliced = yvals_i[sl]
-                    ax.plot(x_sliced, y_sliced, marker='o', label=obs_name)
+                for yvals_j in yvals:
+                    ax.plot(xvals, yvals_j, marker='o', label=obs_name)
+                    for lb, label in enumerate(step_labels):
+                        ax.annotate(label, (xvals[lb], yvals_j[lb]), 
+                                    textcoords='offset points', 
+                                    xytext=(5, 5), fontsize=8)
             else:
-                y_sliced = yvals[sl]
-                ax.plot(x_sliced, y_sliced, marker='o', label=obs_name)
-
+                ax.plot(xvals, yvals, marker='o', label=obs_name)
+                for lb, label in enumerate(step_labels):
+                    ax.annotate(label, (xvals[lb], yvals[lb]), 
+                                textcoords='offset points', 
+                                xytext=(5, 5), fontsize=8)
             ax.set_xlabel(var_label)
             ax.set_ylabel(obs_name)
             ax.set_title(obs_name.replace('_', ' ').capitalize())
@@ -814,7 +823,7 @@ class DataScan:
 
         Returns a dict for multi-component observables, else a float.
         """
-        _, yvals = self.resolve_observable(observable)
+        _, yvals, _ = self.resolve_observable(observable)
         if isinstance(yvals, list):
             return {f'{observable}_{i}': float(np.nanmean(yvals_i))
                     for i, yvals_i in enumerate(yvals)}
@@ -867,48 +876,77 @@ class DataScan:
             return
 
         steps = self._steps_in_range()
-        xvals, yvals_list = self.resolve_observable(obs_name)
+        xvals, yvals_list, ylabels = self.resolve_observable(obs_name)
 
-        images   = [step.image if step.image is not None
+        images      = [step.image if step.image is not None
                     else np.zeros((10, 10)) for step in steps]
-        n_frames = len(images)
+        images_slit = [step.image_slit if step.image_slit is not None
+                       else np.zeros((10, 10)) for step in steps]
 
-        # Determine the number of subplots (depending on how many
-        # observable components are present)
+        vmin_b1   = min(img.min() for img in images)
+        vmax_b1   = max(img.max() for img in images)
+        vmin_slit = min(img.min() for img in images_slit)
+        vmax_slit = max(img.max() for img in images_slit)
+
+        n_frames  = len(images)
+
         n_trace   = len(yvals_list) if isinstance(yvals_list, list) else 1
-        fig, axes = plt.subplots(1 + n_trace, 1,
-                                 figsize=(10, 4 + 3 * n_trace))
-        if 1 + n_trace == 1:
-            axes = [axes]
-        ax_img = axes[0]
+        fig = plt.figure(figsize=(14 + 3 * n_trace, 10) )
+        # Always two lines, multiple cols
+        gs = fig.add_gridspec(2, 1 + n_trace // 2 , hspace=0.3, wspace=0.3)
+        ax_img  = fig.add_subplot(gs[0, 0])
+        ax_slit = fig.add_subplot(gs[1, 0])
 
-        # Image plotting
-        im = ax_img.imshow(images[0].T, cmap='viridis', animated=True)
+        im = ax_img.imshow(images[0].T, cmap='viridis', animated=True,
+                           vmin=vmin_b1, vmax=vmax_b1)
         plt.colorbar(im, ax=ax_img, label='Intensity')
         ax_img.set_xlabel('Pixel X')
         ax_img.set_ylabel('Pixel Y')
-        img_title = ax_img.set_title('Step 0')
+        ax_img.set_title('DVF B1')
+
+        im_slit = ax_slit.imshow(images_slit[0], cmap='viridis', animated=True,
+                                 vmin=vmin_slit, vmax=vmax_slit)
+        plt.colorbar(im_slit, ax=ax_slit, label='Intensity')
+        ax_slit.set_xlabel('Pixel X')
+        ax_slit.set_ylabel('Pixel Y')
+        ax_slit.set_title('DVF A1 (slit)')
+
+        step_title = fig.suptitle('Step 0', y=0.95)
 
         var_label = (self.scan_variable.split('.')[-1]
                      if self.scan_variable and '.' in self.scan_variable
                      else self.scan_variable or 'step')
+        labels = [str(s.step_index) for s in steps]
         trace_markers = []
 
         # Separate axis to plot observable evolution along scan
+
+        # Compound observable (more than one component: fwhm, centroid [x/y])
         if isinstance(yvals_list, list):
-            for i, (yvals_i, ax_tr) in enumerate(zip(yvals_list, axes[1:])):
-                ax_tr.plot(xvals, yvals_i, marker='o', color='steelblue',
-                           label=f'{obs_name} {i}')
+            for i, (yvals_i, ax_tr) in enumerate(zip(yvals_list, range(n_trace))):
+                ax_tr = fig.add_subplot(gs[0 + (i % 2), 1 + int(i / 2) ])
+                line, = ax_tr.plot(xvals, yvals_i, marker='o', color='steelblue',
+                                   label=f'{ylabels[i]}')
+                for lb, label in enumerate(labels):
+                    ax_tr.annotate(label, (xvals[lb], yvals_i[lb]),
+                                   textcoords='offset points',
+                                   xytext=(5, 5), fontsize=8,
+                                   color=line.get_color())
                 mk, = ax_tr.plot([], [], 'ro', markersize=10, label='Current')
                 trace_markers.append(mk)
                 ax_tr.set_xlabel(var_label)
-                ax_tr.set_ylabel(f'{obs_name} {i}')
+                ax_tr.set_ylabel(f'{ylabels[i]}')
                 ax_tr.legend()
                 ax_tr.grid(True)
         else:
-            ax_tr = axes[1]
-            ax_tr.plot(xvals, yvals_list, marker='o', color='steelblue',
-                       label=obs_name)
+            ax_tr = fig.add_subplot(gs[0, 1])
+            line, = ax_tr.plot(xvals, yvals_list, marker='o', color='steelblue',
+                               label=obs_name)
+            for lb, label in enumerate(labels):
+                ax_tr.annotate(label, (xvals[lb], yvals_list[lb]),
+                               textcoords='offset points',
+                               xytext=(5, 5), fontsize=8,
+                               color=line.get_color())
             trace_markers.append(
                 ax_tr.plot([], [], 'ro', markersize=10, label='Current')[0]
             )
@@ -919,14 +957,14 @@ class DataScan:
 
         def update(frame):
             im.set_data(images[frame].T)
-            im.set_clim(images[frame].min(), images[frame].max())
-            img_title.set_text(f'Step {frame}')
+            im_slit.set_data(images_slit[frame])
+            step_title.set_text(f'Step {frame}')
             for j, mk in enumerate(trace_markers):
                 if isinstance(yvals_list, list):
                     mk.set_data([xvals[frame]], [yvals_list[j][frame]])
                 else:
                     mk.set_data([xvals[frame]], [yvals_list[frame]])
-            return [im, img_title] + trace_markers
+            return [im, im_slit, step_title] + trace_markers
 
         anim = FuncAnimation(fig, update, frames=n_frames,
                              interval=1000 // fps, blit=True)
@@ -934,9 +972,9 @@ class DataScan:
 
         if filename:
             if save_fmt == 'gif':
-                anim.save(filename, writer='pillow', fps=fps, dpi=300)
+                anim.save(f"{filename}.{save_fmt}", writer='pillow', fps=fps, dpi=300)
             elif save_fmt == 'mp4':
-                anim.save(filename, writer='ffmpeg', fps=fps, dpi=300)
+                anim.save(f"{filename}.{save_fmt}", writer='ffmpeg', fps=fps, dpi=300)
             plt.close()
         else:
             plt.close()
@@ -964,6 +1002,12 @@ class DataScan:
                      else np.zeros((10, 10)) for s in steps]
         images_b1 = [s.image if s.image is not None
                      else np.zeros((10, 10)) for s in steps]
+
+        vmin_a1 = min(img.min() for img in images_a1)
+        vmax_a1 = max(img.max() for img in images_a1)
+        vmin_b1 = min(img.min() for img in images_b1)
+        vmax_b1 = max(img.max() for img in images_b1)
+
         n_frames = len(images_a1)
 
         n_trace = len(yv_list) if isinstance(yv_list, list) else 1
@@ -972,13 +1016,15 @@ class DataScan:
         ax_a1 = fig.add_subplot(gs[0, 0])
         ax_b1 = fig.add_subplot(gs[0, 1])
 
-        im_a1 = ax_a1.imshow(images_a1[0], cmap='viridis', animated=True)
+        im_a1 = ax_a1.imshow(images_a1[0], cmap='viridis', animated=True,
+                             vmin=vmin_a1, vmax=vmax_a1)
         plt.colorbar(im_a1, ax=ax_a1, label='Intensity')
         ax_a1.set_xlabel('Pixel X')
         ax_a1.set_ylabel('Pixel Y')
         ax_a1.set_title('DVF A1')
 
-        im_b1 = ax_b1.imshow(images_b1[0], cmap='viridis', animated=True)
+        im_b1 = ax_b1.imshow(images_b1[0], cmap='viridis', animated=True,
+                             vmin=vmin_b1, vmax=vmax_b1)
         plt.colorbar(im_b1, ax=ax_b1, label='Intensity')
         ax_b1.set_xlabel('Pixel X')
         ax_b1.set_ylabel('Pixel Y')
@@ -986,13 +1032,19 @@ class DataScan:
 
         step_label = fig.suptitle('Step 0', y=0.95)
 
+        labels = [str(s.step_index) for s in steps]
         trace_markers = []
 
         if isinstance(yv_list, list):
             for i, (yvi, idx) in enumerate(zip(yv_list, range(n_trace))):
                 ax_tr = fig.add_subplot(gs[1 + idx, :])
-                ax_tr.plot(xv, yvi, marker='o', color='steelblue',
-                           label=f'{obs_name} {i}')
+                line, = ax_tr.plot(xv, yvi, marker='o', color='steelblue',
+                                   label=f'{obs_name} {i}')
+                for lb, label in enumerate(labels):
+                    ax_tr.annotate(label, (xv[lb], yvi[lb]),
+                                   textcoords='offset points',
+                                   xytext=(5, 5), fontsize=8,
+                                   color=line.get_color())
                 mk, = ax_tr.plot([], [], 'ro', markersize=10, label='Current')
                 trace_markers.append(mk)
                 ax_tr.set_xlabel('Step index')
@@ -1001,8 +1053,13 @@ class DataScan:
                 ax_tr.grid(True)
         else:
             ax_tr = fig.add_subplot(gs[1, :])
-            ax_tr.plot(xv, yv_list, marker='o', color='steelblue',
-                       label=obs_name)
+            line, = ax_tr.plot(xv, yv_list, marker='o', color='steelblue',
+                               label=obs_name)
+            for lb, label in enumerate(labels):
+                ax_tr.annotate(label, (xv[lb], yv_list[lb]),
+                               textcoords='offset points',
+                               xytext=(5, 5), fontsize=8,
+                               color=line.get_color())
             trace_markers.append(
                 ax_tr.plot([], [], 'ro', markersize=10, label='Current')[0]
             )
@@ -1013,9 +1070,7 @@ class DataScan:
 
         def update(frame):
             im_a1.set_data(images_a1[frame])
-            im_a1.set_clim(images_a1[frame].min(), images_a1[frame].max())
             im_b1.set_data(images_b1[frame])
-            im_b1.set_clim(images_b1[frame].min(), images_b1[frame].max())
             step_label.set_text(f'Step {frame}')
             for j, mk in enumerate(trace_markers):
                 if isinstance(yv_list, list):
@@ -1075,8 +1130,8 @@ class DataSet:
         self.scan_motor    = None
 
         # Global slicing for plot / statistics methods.
-        self.scan_range = None          # (start, end) tuple
-        self.step_range = None          # (start, end) tuple
+        self.scan_range = slice(None)   # slice over scans
+        self.step_range = slice(None)   # slice over steps
 
         self.analysis_mode = analysis_mode
         self._droi = droi
@@ -1180,12 +1235,7 @@ class DataSet:
     # ------------------------------------------------------------------
 
     def _scans_in_range(self):
-        if self.scan_range is None:
-            return self.scans
-        start, end = self.scan_range
-        if end == -1:
-            return self.scans[start:]
-        return self.scans[start:end]
+        return self.scans[self.scan_range]
 
     # ------------------------------------------------------------------
     #  Multi-scan plotting
@@ -1204,6 +1254,8 @@ class DataSet:
         ----------
         observable : str
         first_item : int
+            First step index.  Resets each scan's ``step_range``
+            to ``slice(first_item, last_item)``.
         last_item : int or None
 
         Returns
@@ -1214,14 +1266,27 @@ class DataSet:
         scans   = self._scans_in_range()
 
         for scan in scans:
-            scan.step_range = self.step_range
-            xv, yv = scan.resolve_observable(observable)
-            sl = slice(first_item, last_item)
+            sr = self.step_range
+            if first_item != 0 or last_item is not None:
+                sr = slice(first_item, last_item)
+            scan.step_range = sr
+            xvals, yvals, yl = scan.resolve_observable(observable)
+            step_labels = [str(s.step_index) for s in scan._steps_in_range()]
             label = f'Scan #{scan.scan_index}'
-            if isinstance(yv, list):
-                ax.plot(xv[sl], yv[0][sl], marker='o', label=label)
+            if isinstance(yvals, list):
+                line, = ax.plot(xvals, yvals[0], marker='o', label=label)
+                for lb, label in enumerate(step_labels):
+                    ax.annotate(label, (xvals[lb], yvals[0][lb]),
+                                textcoords='offset points',
+                                xytext=(5, 5), fontsize=8,
+                                color=line.get_color())
             else:
-                ax.plot(xv[sl], yv[sl], marker='o', label=label)
+                line, = ax.plot(xvals, yvals, marker='o', label=label)
+                for lb, label in enumerate(step_labels):
+                    ax.annotate(label, (xvals[lb], yvals[lb]),
+                                textcoords='offset points',
+                                xytext=(5, 5), fontsize=8,
+                                color=line.get_color())
 
         var_label = (self.scan_variable.split('.')[-1]
                      if self.scan_variable and '.' in self.scan_variable
