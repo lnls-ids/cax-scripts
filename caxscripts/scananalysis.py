@@ -70,6 +70,21 @@ def _extract_metadata_value(val):
         return float(val[0])
     return float(val)
 
+def _group_all_attrs(step_data):
+    """
+    Group all attributes of a step entry in the HDF5 file
+    (identified as ``'attrs'``) into a single dictionary.
+    """
+    if 'attrs' in step_data:
+        step_attrs = step_data['attrs']
+    for key in step_data.keys():
+        if 'attrs' in step_data[key]:
+            extra_attrs = step_data[key]['attrs']
+            step_attrs.update([
+                (f"{key}.{k}", v) for k, v in extra_attrs.items()
+            ])
+
+    return step_attrs
 
 def _find_slit_blade_device(metadata_list, scan_device):
     """Find which device's blade positions actually vary across steps.
@@ -120,17 +135,17 @@ def _scan_variable_from_metadata(metadata, scan_type, scan_device, scan_motor,
     positions stored in the metadata.  Uses *blade_device* when given
     (so the caller can override a mis-matched ``scan_device`` attribute).
     """
-    if scan_type == _SCAN_TYPE_SLIT:
-        dev    = blade_device or scan_device
-        top    = _extract_metadata_value(metadata.get(f'{dev}.top',    0))
-        bottom = _extract_metadata_value(metadata.get(f'{dev}.bottom', 0))
-        left   = _extract_metadata_value(metadata.get(f'{dev}.left',   0))
-        right  = _extract_metadata_value(metadata.get(f'{dev}.right',  0))
+    # if scan_type == _SCAN_TYPE_SLIT:
+    #     dev    = blade_device or scan_device
+    #     top    = _extract_metadata_value(metadata.get(f'{dev}.top',    0))
+    #     bottom = _extract_metadata_value(metadata.get(f'{dev}.bottom', 0))
+    #     left   = _extract_metadata_value(metadata.get(f'{dev}.left',   0))
+    #     right  = _extract_metadata_value(metadata.get(f'{dev}.right',  0))
         
-        # @Arnaldo, I'm not sure this calculation of slit center is correct.
-        slit_center_x = (left + right) / 2
-        slit_center_y = (top + bottom) / 2
-        return (slit_center_x, slit_center_y)
+    #     # @Arnaldo, I'm not sure this calculation of slit center is correct.
+    #     slit_center_x = (left + right) / 2
+    #     slit_center_y = (top + bottom) / 2
+    #     return (slit_center_x, slit_center_y)
 
     dev_motor = f'{scan_device}.{scan_motor}'
     val = metadata.get(dev_motor)
@@ -344,33 +359,73 @@ class DataScan:
     ----------
     scan_index : int
         Index of this scan within a set.
-    steps : list of DataStep
-        The individual step objects.
     scan_type : str
         ``'mirror'``, ``'slit'``, ``'caustic'``.
     scan_variable : str
         Name of the scanned variable (e.g. ``'mirror.tx'``).
+    scan_dict: dict
+        Dictionary containing all scan metadata and steps.
     scan_device : str or None
         Device being scanned.
     scan_motor : str or None
         Motor being scanned.
     """
 
-    def __init__(self, scan_index, steps, scan_type, scan_variable,
-                 scan_device=None, scan_motor=None):
+    def __init__(self, scan_index, scan_type, scan_variable,
+                 scan_dict, scan_device, scan_motor, scan_name,
+                 analysis_mode, _droi):
         self.scan_index    = scan_index
-        self.steps         = steps
         self.scan_type     = scan_type
         self.scan_variable = scan_variable
         self.scan_device   = scan_device
         self.scan_motor    = scan_motor
+        self.scan_name     = scan_name
+        self.analysis_mode = analysis_mode
+        self._droi         = _droi 
         self.observables   = []
         self.step_range    = None       # (start, end) tuple for slicing
 
+        self._load(scan_dict)
     # ------------------------------------------------------------------
     #  Discovery
     # ------------------------------------------------------------------
 
+
+    def _load(self, scan_dict):
+        step_keys = sorted(scan_dict.keys())
+        if not step_keys:
+            raise ValueError("HDF5 file contains no scan groups.")
+
+        self.steps = []
+        for sk in step_keys:
+            step_data  = scan_dict[sk]
+            step_attrs = _group_all_attrs(step_data)
+
+            step_idx = int(sk.split('-')[-1])
+
+            image_b1 = step_data.get('dvf_B1', {}).get('data')
+            image_a1 = step_data.get('dvf_A1', {}).get('data')
+            exptime = 1.0
+            if image_b1 is not None:
+                exptime = step_data['dvf_B1']['attrs'].get('expo_time', 1.0)
+            elif image_a1 is not None:
+                exptime = step_data['dvf_A1']['attrs'].get('expo_time', 1.0)
+
+            step = DataStep(
+                step_index=step_idx,
+                metadata=step_attrs,
+                image=image_b1,               # primary: DVF B1
+                image_slit=image_a1,     # secondary: DVF A1
+                scan_type=self.scan_name,
+                scan_device=self.scan_device,
+                scan_motor=self.scan_motor,
+                analysis_mode=self.analysis_mode,
+                droi=self._droi,
+                exptime=exptime,
+                # blade_device=blade_device,
+            )
+            self.steps.append(step)
+    
     @property
     def available_observables(self):
         """List all plottable observable names.
@@ -388,19 +443,20 @@ class DataScan:
                 meta_keys.append(k)
             elif isinstance(v, np.ndarray) and v.ndim == 0:
                 meta_keys.append(k)
-            elif isinstance(v, np.ndarray) and v.ndim == 1 and v.size == 1:
+            elif isinstance(v, np.ndarray) and v.ndim == 1:# and v.size == 1:
                 meta_keys.append(k)
 
         return list(_COMPONENT_MAP.keys()) + _COMPONENT_FLAT + meta_keys
 
-    def describe_scan(self):
+    def describe(self):
         """Print an overview of this scan and its available observables."""
         name = self.scan_variable or '(unknown)'
         print(f"Scan #{self.scan_index}  [{self.scan_type}]")
         print(f"  variable : {name}")
         print(f"  steps    : {len(self.steps)}")
         obs = self.available_observables
-        print(f"  observables ({len(obs)}): {', '.join(obs)}")
+        print(f"  observables ({len(obs)}):")
+        for o in obs: print("\t"+o, end=";\n")
 
     # ------------------------------------------------------------------
     #  Internal data helpers
@@ -1022,7 +1078,7 @@ class DataSet:
         self.scan_range = None          # (start, end) tuple
         self.step_range = None          # (start, end) tuple
 
-        self._analysis_mode = analysis_mode
+        self.analysis_mode = analysis_mode
         self._droi = droi
 
         self._load(workdir, pattern)
@@ -1088,13 +1144,13 @@ class DataSet:
                     "DataSet requires all scans to be of the same type."
                 )
 
-    def _parse_scan(self, raw, scan_index):
+    def _parse_scan(self, scan_dict, scan_index):
         """Convert a raw HDF5 dict into a DataScan with DataStep children."""
-        step_keys = sorted(raw.keys())
+        step_keys = sorted(scan_dict.keys())
         if not step_keys:
             raise ValueError("HDF5 file contains no scan groups.")
 
-        first = raw[step_keys[0]]
+        first = scan_dict[step_keys[0]]
         attrs = first['attrs']
 
         scan_name = attrs.get('scan_name', 'mirror')
@@ -1107,51 +1163,16 @@ class DataSet:
             scan_motor    = attrs.get('scan_motor', 'tx')
             scan_variable = f'{scan_device}.{scan_motor}'
 
-        # Pre-scan metadata to detect the varying slit device.
-        all_meta = [raw[sk]['attrs'] for sk in step_keys]
-        blade_device = None
-        if scan_name == _SCAN_TYPE_SLIT:
-            blade_device = _find_slit_blade_device(all_meta, scan_device)
-
-        steps = []
-        for sk in step_keys:
-            step_data  = raw[sk]
-            step_attrs = step_data['attrs']
-            if step_attrs.get('state') == 'initial':
-                pass
-                # continue
-            step_idx = int(sk.split('-')[-1])
-
-            image_b1 = step_data.get('dvf_B1', {}).get('data')
-            image_a1 = step_data.get('dvf_A1', {}).get('data')
-            exptime = 1.0
-            if image_b1 is not None:
-                exptime = step_data['dvf_B1']['attrs'].get('expo_time', 1.0)
-            elif image_a1 is not None:
-                exptime = step_data['dvf_A1']['attrs'].get('expo_time', 1.0)
-
-            step = DataStep(
-                step_index=step_idx,
-                metadata=step_attrs,
-                image=image_b1,               # primary: DVF B1
-                image_slit=image_a1,     # secondary: DVF A1
-                scan_type=scan_name,
-                scan_device=scan_device,
-                scan_motor=scan_motor,
-                analysis_mode=self._analysis_mode,
-                droi=self._droi,
-                exptime=exptime,
-                blade_device=blade_device,
-            )
-            steps.append(step)
-
         return DataScan(
             scan_index=scan_index,
-            steps=steps,
             scan_type=scan_name,
             scan_variable=scan_variable,
+            scan_dict=scan_dict,
             scan_device=scan_device,
             scan_motor=scan_motor,
+            scan_name=scan_name,
+            analysis_mode=self.analysis_mode,
+            _droi=self._droi,
         )
 
     # ------------------------------------------------------------------
