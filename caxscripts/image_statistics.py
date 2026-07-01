@@ -33,7 +33,6 @@ import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.patches import Ellipse
 from scipy.optimize import curve_fit
-from caxscripts.config import Config as Cfg
 from scipy.signal import savgol_filter
 
 # ---------------------------------------------------------------------------
@@ -114,6 +113,7 @@ class Histogram2DAnalyzer:
         self.optimal_threshold = np.max(img) * 0.1
         self.img_thresholded   = None
         self.data              = None
+        self.pixel_size        = 1
         self._bin_centers(x_bin_edges, y_bin_edges)
 
         # Run quick analysis automatically
@@ -309,7 +309,7 @@ class Histogram2DAnalyzer:
         data = np.asarray(data)
         threshold = 0.5 * np.max(data)
         mask = data > threshold
-        return np.sum(mask) * Cfg.SCALE
+        return np.sum(mask) * self.pixel_size
 
     def qck_peak_value(self, data):
         """Calculate peak value."""
@@ -317,7 +317,7 @@ class Histogram2DAnalyzer:
 
     def qck_peak_position(self, data):
         """Calculate position of the peak."""
-        return np.argmax(data) * Cfg.SCALE
+        return np.argmax(data) * self.pixel_size
 
     def qck_full_width(self, data, coords=None, hfactor=0.5):
         """Calculate width at given height factor."""
@@ -337,7 +337,7 @@ class Histogram2DAnalyzer:
         yr = data_half[idxright]
 
         zeros = (yr * xl - yl * xr) / (yr - yl)
-        width = (zeros[-1] - zeros[0]) * Cfg.SCALE
+        width = (zeros[-1] - zeros[0]) * self.pixel_size
 
         return width, zeros
 
