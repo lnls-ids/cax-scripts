@@ -47,7 +47,8 @@ ELLIPSES = ((1, COLORS["in"]), (2, COLORS["mid"]), (3, COLORS["out"]))
 ELLIPSES_TITLE = "2D Histogram with Ellipses"
 
 # Threshold for peak-to-average ratio acceptance of image.
-PEAK2AVG_THRESHOLD = 100
+# PEAK2AVG_THRESHOLD = 100
+PEAK2AVG_THRESHOLD = 5
 
 # FWHM <-> sigma conversion: FWHM = f2sig * sigma
 FWHM2SIG = 2 * np.sqrt(2 * np.log(2))
@@ -134,9 +135,9 @@ class Histogram2DAnalyzer:
             bool: True if the beam is considered visible.
         """
         roi_avg = np.mean(
-                 self.img[cx - self.droi : cx + self.droi,
-                          cy - self.droi : cy + self.droi]
-        )
+            self.img[cx - self.droi : cx + self.droi,
+            cy - self.droi : cy + self.droi]
+            )
         mean = np.mean(self.img)
         ratio = roi_avg / mean if mean != 0 else 0
         return ratio >= PEAK2AVG_THRESHOLD
@@ -466,7 +467,7 @@ class Histogram2DAnalyzer:
         cx, cy = centroid
         fx, fy = fwhms
 
-        peak = np.mean(img[cy - droi:cy + droi + 1, cx - droi:cx + droi + 1])
+        peak = np.mean(img[cx - droi:cx + droi + 1, cy - droi:cy + droi + 1])
         peak /= exptime
         peak_fwhm_norm = peak / (fx * fy) if fx * fy != 0 else 0
 
@@ -562,7 +563,8 @@ class Histogram2DAnalyzer:
                              indexing="ij")
         wsum = weight.sum()
         if wsum <= 0:
-            raise ValueError("Total weight must be positive.")
+            print(f"WARNING: Total weight must be positive. wsum={wsum}")
+            return (None, None), None
         mux = (weight * xg).sum() / wsum
         muy = (weight * yg).sum() / wsum
         dx = xg - mux
@@ -571,7 +573,7 @@ class Histogram2DAnalyzer:
         vary  = (weight * dy * dy).sum() / wsum
         covxy = (weight * dx * dy).sum() / wsum
         covmat = np.array([[varx, covxy], [covxy, vary]])
-        return covmat, (mux, muy)
+        return (mux, muy), covmat
 
     def _ellipse_params_from_cov(self, cov):
         """Return principal-axis parameters from a 2x2 covariance matrix.
@@ -668,6 +670,12 @@ class Histogram2DAnalyzer:
         Returns:
             hprm: momenta dictionary; also stored in self.hprm.
         """
+        if not self.beam_visible:
+            import warnings
+            warnings.warn("Beam not visible; skipping momenta analysis.",
+                          stacklevel=2)
+            return None
+        
         img = self.img if img is None else np.asarray(img, dtype=float)
         if img.ndim != 2:
             raise ValueError("img must be a 2D array.")
@@ -677,12 +685,12 @@ class Histogram2DAnalyzer:
         if self.y_bin_edges.size != ny + 1:
             raise ValueError("y_bin_edges length must be img.shape[1] + 1.")
 
-        covmat, (mux, muy) = self._covariance_from_moments(img)
+        (mux, muy), covmat = self._covariance_from_moments(img)
         sigx = np.sqrt(covmat[0, 0])
         sigy = np.sqrt(covmat[1, 1])
         sig_major, sig_minor, theta, evecs = self._ellipse_params_from_cov(
             covmat
-        )
+            )
 
         self.hprm_momenta = {
             "mux"       : mux,
@@ -716,6 +724,9 @@ class Histogram2DAnalyzer:
         Returns:
             hprm: fitted parameters dictionary; also stored in self.hprm.
         """
+        if not self.beam_visible:
+            return None
+
         if hprm is None:
             if self.hprm_momenta is None:
                 self.compute_momenta()
