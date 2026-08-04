@@ -731,7 +731,7 @@ class Histogram2DAnalyzer:
             hprm["sigy"],
             hprm["cov"][0, 1],
         ]
-        popt, _ = curve_fit(
+        popt, covfit = curve_fit(
             self._gaussian_2d,
             (xg.ravel(), yg.ravel()),
             img_norm.ravel(),
@@ -757,6 +757,7 @@ class Histogram2DAnalyzer:
             "evecs"     : evecs,
             "xcenters"  : self.xcenters,
             "ycenters"  : self.ycenters,
+            "covfit"    : covfit,
         }
         return self.hprm_fit
 
