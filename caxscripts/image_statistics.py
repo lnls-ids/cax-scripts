@@ -549,11 +549,12 @@ class Histogram2DAnalyzer:
         self.y_bin_centers = 0.5 * (self.y_bin_edges[:-1] +
                                     self.y_bin_edges[1:])
 
-    def _covariance_from_moments(self, weight):
+    def _covariance_from_moments(self, weight, useroi=False):
         """Compute the 2x2 covariance matrix from weighted bin-center moments.
 
         Args:
             weight: 2D weight array (same shape as the histogram).
+            useroi: if True, fit only within a 3-sigma ellipse ROI.
 
         Returns:
             covmat: 2x2 covariance matrix.
@@ -561,6 +562,18 @@ class Histogram2DAnalyzer:
         """
         xg, yg = np.meshgrid(self.x_bin_centers, self.y_bin_centers,
                              indexing="ij")
+
+        if useroi:
+            roi_mask = (
+                (xg >= self.hprm_project["mux"] - 3 * self.hprm_project["sigx"]) &
+                (xg <= self.hprm_project["mux"] + 3 * self.hprm_project["sigx"]) &
+                (yg >= self.hprm_project["muy"] - 3 * self.hprm_project["sigy"]) &
+                (yg <= self.hprm_project["muy"] + 3 * self.hprm_project["sigy"])
+            )
+            xg     = xg[roi_mask]
+            yg     = yg[roi_mask]
+            weight = weight[roi_mask]
+        
         wsum = weight.sum()
         if wsum <= 0:
             print(f"WARNING: Total weight must be positive. wsum={wsum}")
@@ -660,12 +673,14 @@ class Histogram2DAnalyzer:
     # Public pipeline methods.
     # ------------------------------------------------------------------
 
-    def compute_momenta(self, img=None):
+    def compute_momenta(self, img=None, useroi=True):
         """Compute weighted momenta and principal-axis info.
 
         Arguments:
             img: optional array to analyse instead of self.img
                 (e.g. self.img_thresholded).
+            useroi: if True, fit only within a 3-sigma ellipse ROI.
+
 
         Returns:
             hprm: momenta dictionary; also stored in self.hprm.
@@ -685,7 +700,7 @@ class Histogram2DAnalyzer:
         if self.y_bin_edges.size != ny + 1:
             raise ValueError("y_bin_edges length must be img.shape[1] + 1.")
 
-        (mux, muy), covmat = self._covariance_from_moments(img)
+        (mux, muy), covmat = self._covariance_from_moments(img, useroi=useroi)
         sigx = np.sqrt(covmat[0, 0])
         sigy = np.sqrt(covmat[1, 1])
         sig_major, sig_minor, theta, evecs = self._ellipse_params_from_cov(
