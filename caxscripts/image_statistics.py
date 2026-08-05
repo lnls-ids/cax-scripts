@@ -3,12 +3,15 @@
 All functionality lives inside Histogram2DAnalyzer:
 
   Construction
-  - Histogram2DAnalyzer(img, xedges, yedges)  — from an existing histogram.
-  - Histogram2DAnalyzer.from_gaussian(...)     — generate a Gaussian histogram.
+  - Histogram2DAnalyzer(img, x_bin_edges, y_bin_edges)
+            — from an existing histogram.
+  - Histogram2DAnalyzer.from_gaussian(...)
+            — generate a Gaussian histogram.
 
   Quick Analysis (run on init)
-  - compute_quick()         — compute quick beam params (centroid, FWHM, visibility).
-  - beam_visible          — attribute: whether beam is visible.
+  - compute_quick()     — compute quick beam params
+                        (centroid, FWHM visibility).
+  - beam_visible        — attribute: whether beam is visible.
   - hprm_qck            — attribute: quick parameters dict.
 
   Full Analysis
@@ -22,14 +25,14 @@ All functionality lives inside Histogram2DAnalyzer:
   - plot_entropy(entropies, bin_edges, optimal_threshold)
 
   Orchestration
-  - analyze(mode)        — run analysis pipeline; mode in ('quick', 'moments', 'fit', 'all').
+  - analyze(mode)        — run analysis pipeline;
+                           mode in ('quick', 'moments', 'fit', 'all').
 """
 
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.patches import Ellipse
 from scipy.optimize import curve_fit
-from caxscripts.config import Config as Cfg
 from scipy.signal import savgol_filter
 
 # ---------------------------------------------------------------------------
@@ -44,7 +47,8 @@ ELLIPSES = ((1, COLORS["in"]), (2, COLORS["mid"]), (3, COLORS["out"]))
 ELLIPSES_TITLE = "2D Histogram with Ellipses"
 
 # Threshold for peak-to-average ratio acceptance of image.
-PEAK2AVG_THRESHOLD = 100
+# PEAK2AVG_THRESHOLD = 100
+PEAK2AVG_THRESHOLD = 5
 
 # FWHM <-> sigma conversion: FWHM = f2sig * sigma
 FWHM2SIG = 2 * np.sqrt(2 * np.log(2))
@@ -64,7 +68,7 @@ class Histogram2DAnalyzer:
     Usage::
 
         # From an existing histogram:
-        ana = Histogram2DAnalyzer(hist, xedges, yedges)
+        ana = Histogram2DAnalyzer(hist, x_bin_edges, y_bin_edges)
 
         # Or generate a Gaussian test histogram directly:
         ana = Histogram2DAnalyzer.from_gaussian(bins=80, size=200_000)
@@ -87,79 +91,73 @@ class Histogram2DAnalyzer:
     # Construction.
     # ------------------------------------------------------------------
 
-    def __init__(self, img, xedges, yedges, droi=4):
+    def __init__(self, img, droi=4, x_bin_edges=None, y_bin_edges=None):
         """Initialise with a 2D histogram and its bin edges.
 
         Arguments:
             img: 2D histogram array.
-            xedges: 1D array of x bin edges (length img.shape[0] + 1).
-            yedges: 1D array of y bin edges (length img.shape[1] + 1).
-            droi: half-size of the region of interest for beam visibility.
+            x_bin_edges: 1D array of x bin edges (length img.shape[0] + 1).
+            y_bin_edges: 1D array of y bin edges (length img.shape[1] + 1).
+            droi: size of region to define the peak intensity.
 
-        Runs compute_quick() automatically to populate beam_visible and hprm_qck.
+        Runs compute_quick() automatically to populate beam_visible
+        and hprm_qck.
         """
-        self.img               = np.asarray(img,    dtype=float)
-        self.xedges            = np.asarray(xedges, dtype=float)
-        self.yedges            = np.asarray(yedges, dtype=float)
-        self.xcenters          = 0.5 * (self.xedges[:-1] + self.xedges[1:])
-        self.ycenters          = 0.5 * (self.yedges[:-1] + self.yedges[1:])
+        self.img               = np.asarray(img, dtype=float)
         self.droi              = droi
         self.beam_visible      = None  # set by compute_quick()
-        self.hprm_qck          = None  # quick params: cx, cy, fwhm_x, fwhm_y, sig_x, sig_y
-        self.hprm_mom          = None  # moments params
-        self.hprm_fit          = None  # fit params
+        # quick params: cx, cy, fwhm_x, fwhm_y, sig_x, sig_y
+        self.hprm_project      = None
+        self.hprm_momenta      = None  # momenta params
+        self.hprm_fitting      = None  # fitting params
+        self.hprm              = None
         self.optimal_threshold = np.max(img) * 0.1
         self.img_thresholded   = None
         self.data              = None
+        self.pixel_size        = 1
+        self._bin_centers(x_bin_edges, y_bin_edges)
 
         # Run quick analysis automatically
-        self.compute_quick()
+        self.parameters_from_projections()
 
     # ------------------------------------------------------------------
     # Quick analysis block (run on init).
     # ------------------------------------------------------------------
 
-    def _compute_beam_visibility(self, cx, cy, img=None):
+    def _compute_beam_visibility(self, cx, cy):
         """Compute whether the beam is visible based on peak-to-average ratio.
 
         Args:
             cx: x-coordinate of the beam centroid.
             cy: y-coordinate of the beam centroid.
-            img: optional array to analyze instead of self.img
 
         Returns:
             bool: True if the beam is considered visible.
         """
-        img = self.img if img is None else np.asarray(img, dtype=float)
         roi_avg = np.mean(
-                 img[cx - self.droi:cx + self.droi, 
-                     cy - self.droi:cy + self.droi]
-        )
-        mean = np.mean(img)
+            self.img[cx - self.droi : cx + self.droi,
+            cy - self.droi : cy + self.droi]
+            )
+        mean = np.mean(self.img)
         ratio = roi_avg / mean if mean != 0 else 0
         return ratio >= PEAK2AVG_THRESHOLD
 
-    def _qck_centroid(self, img=None):
+    def _centroid_from_projection(self):
         """Calculate beam centroid via smoothed projected sums.
 
-        Parameters:
-            img: optional array to analyze instead of self.img
-                (e.g. self.img_thresholded).
-        
         Returns:
             np.array: [cx, cy] centroid coordinates.
         """
-        img = self.img if img is None else np.asarray(img, dtype=float)
-        # image is being transposed before being attributed to the class 
-        # then, its shape is (nx, ny) and the x projection is along axis=1, 
+        # image is being transposed before being attributed to the class
+        # then, its shape is (nx, ny) and the x projection is along axis=1,
         # while the y projection along axis=0
-        cx_sum = np.sum(img, axis=1)
-        cy_sum = np.sum(img, axis=0)
+        cx_sum = np.sum(self.img, axis=1)
+        cy_sum = np.sum(self.img, axis=0)
         xsmooth = savgol_filter(cx_sum, window_length=21, polyorder=2)
         ysmooth = savgol_filter(cy_sum, window_length=21, polyorder=2)
         return np.array([np.argmax(xsmooth), np.argmax(ysmooth)])
 
-    def _qck_fwhm(self, cx, cy, img=None):
+    def _fwhm_from_projection(self, cx, cy, img=None):
         """Calculate beam FWHM via half-max threshold.
 
         Args:
@@ -192,7 +190,7 @@ class Histogram2DAnalyzer:
 
     @staticmethod
     def fwhm_to_sigma(fwhm):
-        """Convert FWHM to sigma (alias for _qck_sigma).
+        """Convert FWHM to sigma.
 
         Args:
             fwhm: FWHM value(s).
@@ -217,55 +215,58 @@ class Histogram2DAnalyzer:
             theta_wrapped -= 2 * np.pi
         return theta_wrapped
 
-    def compute_quick(self, img=None):
-        """Compute quick beam parameters automatically on init.
+    def parameters_from_projections(self):
+        """Compute beam parameters from projections automatically.
 
         Sets self.beam_visible and self.hprm_qck if beam is visible.
 
-        Parameters:
+        Args:
             img: optional array to analyze instead of self.img
                 (e.g. self.img_thresholded).
 
         Returns:
             dict or None: hprm_qck if visible, None otherwise.
         """
-        img = self.img if img is None else np.asarray(img, dtype=float)
-        if img.ndim != 2:
+        if self.img.ndim != 2:
             raise ValueError("img must be a 2D array.")
-        nx, ny = img.shape
-        if self.xedges.size != nx + 1:
-            raise ValueError("xedges length must be img.shape[0] + 1.")
-        if self.yedges.size != ny + 1:
-            raise ValueError("yedges length must be img.shape[1] + 1.")
+        nx, ny = self.img.shape
+        if self.x_bin_edges.size != nx + 1:
+            raise ValueError("x_bin_edges length must be img.shape[0] + 1.")
+        if self.y_bin_edges.size != ny + 1:
+            raise ValueError("y_bin_edges length must be img.shape[1] + 1.")
 
-        cx, cy = self._qck_centroid(img=img)
-        self.beam_visible = self._compute_beam_visibility(cx, cy, img=img)
+        cx, cy = self._centroid_from_projection()
+        self.beam_visible = self._compute_beam_visibility(cx, cy)
 
         if not self.beam_visible:
             import warnings
-            warnings.warn("Beam not visible; skipping quick analysis.")
+            warnings.warn("Beam not visible; skipping quick analysis.",
+                          stacklevel=2)
             return None
 
-        fwhms = self._qck_fwhm(cx, cy, img=img)
-        sigx = self.fwhm_to_sigma(fwhms[0])
-        sigy = self.fwhm_to_sigma(fwhms[1])
-        self.hprm_qck = {
+        fwhms = self._fwhm_from_projection(cx, cy)
+        sigx  = self.fwhm_to_sigma(fwhms[0])
+        sigy  = self.fwhm_to_sigma(fwhms[1])
+        self.hprm_project = {
             "mux"       : cx,
             "muy"       : cy,
             "sigx"      : sigx,
             "sigy"      : sigy,
             "fwhmx"     : fwhms[0],
             "fwhmy"     : fwhms[1],
-            "cov"       : np.diag([sigx**2, sigy**2]),  # no covariance in quick estimate
+            # no cov. in quick estimate
+            "cov"       : np.diag([sigx**2, sigy**2]),
             "sig_major" : max(sigx, sigy),
             "sig_minor" : min(sigx, sigy),
-            "theta"     : 0.5*np.pi*float(sigx<sigy),  # ellipse aligned to axes
-            "evecs"     : np.array([[1, 0], [0, 1]]),  # identity for quick estimate
-            "xcenters"  : self.xcenters, 
-            "ycenters"  : self.ycenters,
+            # ellipse aligned to axes
+            "theta"     : 0.5*np.pi*float(sigx < sigy),
+            # identity for quick estimate
+            "evecs"     : np.array([[1, 0], [0, 1]]),
+            "x_bin_centers"  : self.x_bin_centers,
+            "y_bin_centers"  : self.y_bin_centers,
 
         }
-        return self.hprm_qck
+        return self.hprm_project
 
     def analyze(self, mode='all', warn=True):
         """Run analysis pipeline.
@@ -278,23 +279,24 @@ class Histogram2DAnalyzer:
             dict with results based on mode.
         """
         if mode == 'quick':
-            return self.compute_quick()
+            return self.parameters_from_projections()
 
         if not self.beam_visible:
             if warn:
                 import warnings
                 warnings.warn(
                     f"Beam not visible (mode={mode}); "
-                    "skipping advanced analysis."
+                    "skipping advanced analysis.",
+                    stacklevel=2
                 )
             return None
 
         result = {}
 
-        if mode in ('moments', 'all'):
-            result['moments'] = self.compute_moments()
+        if mode in ('momenta', 'all'):
+            result['moments'] = self.compute_momenta()
 
-        if mode in ('fit', 'all'):
+        if mode in ('fitting', 'all'):
             result['fit'] = self.fit()
 
         return result
@@ -308,7 +310,7 @@ class Histogram2DAnalyzer:
         data = np.asarray(data)
         threshold = 0.5 * np.max(data)
         mask = data > threshold
-        return np.sum(mask) * Cfg.SCALE
+        return np.sum(mask) * self.pixel_size
 
     def qck_peak_value(self, data):
         """Calculate peak value."""
@@ -316,7 +318,7 @@ class Histogram2DAnalyzer:
 
     def qck_peak_position(self, data):
         """Calculate position of the peak."""
-        return np.argmax(data) * Cfg.SCALE
+        return np.argmax(data) * self.pixel_size
 
     def qck_full_width(self, data, coords=None, hfactor=0.5):
         """Calculate width at given height factor."""
@@ -336,7 +338,7 @@ class Histogram2DAnalyzer:
         yr = data_half[idxright]
 
         zeros = (yr * xl - yl * xr) / (yr - yl)
-        width = (zeros[-1] - zeros[0]) * Cfg.SCALE
+        width = (zeros[-1] - zeros[0]) * self.pixel_size
 
         return width, zeros
 
@@ -381,30 +383,30 @@ class Histogram2DAnalyzer:
     # Scan-level helpers (for processing datasets).
     # ------------------------------------------------------------------
 
-    def _get_variable_metadata(self, DataScan, dev_motor):
+    def _get_variable_metadata(self, scandata, dev_motor):
         """Extract variable metadata from scan data.
 
         Args:
-            DataScan: dict containing data for a single scan step.
+            scandata: dict containing data for a single scan step.
             dev_motor: device and motor string (e.g., 'mirror.rx').
 
         Returns:
             list: [value, lolm, hilm, enable].
         """
         device, motor = dev_motor.split('.')
+        if meta := scandata['attrs'].get(dev_motor, None) is not None:
+            return meta
 
-        try:
-            if DataScan['attrs'].get(dev_motor) is not None:
-                meta = DataScan['attrs'].get(dev_motor)
-            elif DataScan.get(device, None) is not None:
-                meta = DataScan[device]['attrs'].get(motor)
-        except (KeyError, TypeError, ValueError) as err:
-            raise ValueError(f"Could not extract metadata for {dev_motor}") from err
-        return meta
+        if meta := scandata.get(device, None) is not None:
+            return meta
 
-    # Obsolete:  this shouldn't be here, as `Histogram2DAnalyzer` is a class 
+        if meta is None:
+            raise ValueError(f"Could not extract metadata for {dev_motor}")
+
+    # Obsolete:  this shouldn't be here, as `Histogram2DAnalyzer` is a class
     # concerned solely with single scan steps.
-    def beam_properties(self, dataset, dev_motor, threshold=PEAK2AVG_THRESHOLD):
+    def beam_properties(self, dataset, dev_motor,
+                        threshold=PEAK2AVG_THRESHOLD):
         """Return beam properties from a full scan dataset.
 
         Args:
@@ -422,17 +424,27 @@ class Histogram2DAnalyzer:
             sc = int(scan.split('-')[-1])
             img = data['dvf_B1']['data']
 
-            cx, cy = self._qck_centroid()
+            cx, cy = self._centroid_from_projection()
 
             if not self._compute_beam_visibility(cx, cy):
                 continue
 
-            xval = float(self._get_variable_metadata(data, dev_motor)[0])
-            fwhms = self._qck_fwhm(cx, cy)
-            sigmas = self._qck_sigma(fwhms)
-            exptime = data['dvf_B1']['attrs']['expo_time']
+            try:
+                meta = self._get_variable_metadata(data, dev_motor)
+                if isinstance(meta, list) and len(meta) > 0:
+                    xval = float(meta[0])
+                elif isinstance(meta, (int, float)):
+                    xval = float(meta)
+                else:
+                    raise ValueError(f"Unexpected metadata format: {meta}")
+            except Exception as err:
+                print(f" WARNING (beam_properties) : {err}")
+                continue
+            fwhms       = self._fwhm_from_projection(cx, cy)
+            sigmas      = self.fwhm_to_sigma(fwhms)
+            expo_time   = data['dvf_B1']['attrs']['expo_time']
             intensities = self.qck_intensity(img, [cx, cy], fwhms,
-                                             exptime, threshold)
+                                             expo_time, threshold)
 
             beam_props[sc] = [xval, [cx, cy], fwhms, sigmas, intensities]
             beam_imgs[sc] = img
@@ -455,7 +467,7 @@ class Histogram2DAnalyzer:
         cx, cy = centroid
         fx, fy = fwhms
 
-        peak = np.mean(img[cy - droi:cy + droi + 1, cx - droi:cx + droi + 1])
+        peak = np.mean(img[cx - droi:cx + droi + 1, cy - droi:cy + droi + 1])
         peak /= exptime
         peak_fwhm_norm = peak / (fx * fy) if fx * fy != 0 else 0
 
@@ -481,6 +493,7 @@ class Histogram2DAnalyzer:
         """Create an analyzer from a randomly sampled Gaussian distribution.
 
         Arguments:
+            cls: Histogram2DAnalyzer class.
             bins: number of bins along each axis.
             size: number of samples to draw.
             mean: 2-element mean vector.
@@ -492,10 +505,10 @@ class Histogram2DAnalyzer:
         """
         rng = np.random.default_rng()
         samples = rng.multivariate_normal(mean=mean, cov=cov, size=size)
-        hist, xedges, yedges = np.histogram2d(
+        hist, x_bin_edges, y_bin_edges = np.histogram2d(
             samples[:, 0], samples[:, 1], bins=bins, range=hist_range
         )
-        return cls(hist, xedges, yedges)
+        return cls(hist, x_bin_edges=x_bin_edges, y_bin_edges=y_bin_edges)
 
     # ------------------------------------------------------------------
     # Preprocessing.
@@ -523,25 +536,43 @@ class Histogram2DAnalyzer:
     # Private math helpers.
     # ------------------------------------------------------------------
 
-    def _bin_centers(self):
-        """Return (xcenters, ycenters) computed from the stored edges."""
-        self.xcenters = 0.5 * (self.xedges[:-1] + self.xedges[1:])
-        self.ycenters = 0.5 * (self.yedges[:-1] + self.yedges[1:])
-        return self.xcenters, self.ycenters
+    def _bin_centers(self, x_bin_edges, y_bin_edges):
+        """Calculate x and y bin centers from the stored edges."""
+        try:
+            self.x_bin_edges = np.asarray(x_bin_edges)
+            self.y_bin_edges = np.asarray(y_bin_edges)
+
+            if (self.x_bin_edges is None or self.y_bin_edges is None or
+                None in self.x_bin_edges or None in self.y_bin_edges):
+                raise ValueError("x_bin_edges or y_bin_edges is None.")
+        except Exception as err:
+            print(f"Warning: {err}\n"
+                  "Could not determine bin edges from provided values."
+                  "\n Extracting from image shape.")
+            self.x_bin_edges = np.arange(self.img.shape[0]+1)
+            self.y_bin_edges = np.arange(self.img.shape[1]+1)
+
+        self.x_bin_centers = 0.5 * (self.x_bin_edges[:-1] +
+                                    self.x_bin_edges[1:])
+        self.y_bin_centers = 0.5 * (self.y_bin_edges[:-1] +
+                                    self.y_bin_edges[1:])
 
     def _covariance_from_moments(self, weight):
         """Compute the 2x2 covariance matrix from weighted bin-center moments.
 
-        Arguments:
+        Args:
             weight: 2D weight array (same shape as the histogram).
+
         Returns:
             covmat: 2x2 covariance matrix.
             (mux, muy): means.
         """
-        xg, yg = np.meshgrid(self.xcenters, self.ycenters, indexing="ij")
+        xg, yg = np.meshgrid(self.x_bin_centers, self.y_bin_centers,
+                             indexing="ij")
         wsum = weight.sum()
         if wsum <= 0:
-            raise ValueError("Total weight must be positive.")
+            print(f"WARNING: Total weight must be positive. wsum={wsum}")
+            return (None, None), None
         mux = (weight * xg).sum() / wsum
         muy = (weight * yg).sum() / wsum
         dx = xg - mux
@@ -550,7 +581,7 @@ class Histogram2DAnalyzer:
         vary  = (weight * dy * dy).sum() / wsum
         covxy = (weight * dx * dy).sum() / wsum
         covmat = np.array([[varx, covxy], [covxy, vary]])
-        return covmat, (mux, muy)
+        return (mux, muy), covmat
 
     def _ellipse_params_from_cov(self, cov):
         """Return principal-axis parameters from a 2x2 covariance matrix.
@@ -637,48 +668,54 @@ class Histogram2DAnalyzer:
     # Public pipeline methods.
     # ------------------------------------------------------------------
 
-    def compute_moments(self, img=None):
-        """Compute weighted moments and principal-axis info.
+    def compute_momenta(self, img=None):
+        """Compute weighted momenta and principal-axis info.
 
         Arguments:
             img: optional array to analyse instead of self.img
                 (e.g. self.img_thresholded).
 
         Returns:
-            hprm: moments dictionary; also stored in self.hprm.
+            hprm: momenta dictionary; also stored in self.hprm.
         """
+        if not self.beam_visible:
+            import warnings
+            warnings.warn("Beam not visible; skipping momenta analysis.",
+                          stacklevel=2)
+            return None
+        
         img = self.img if img is None else np.asarray(img, dtype=float)
         if img.ndim != 2:
             raise ValueError("img must be a 2D array.")
         nx, ny = img.shape
-        if self.xedges.size != nx + 1:
-            raise ValueError("xedges length must be img.shape[0] + 1.")
-        if self.yedges.size != ny + 1:
-            raise ValueError("yedges length must be img.shape[1] + 1.")
+        if self.x_bin_edges.size != nx + 1:
+            raise ValueError("x_bin_edges length must be img.shape[0] + 1.")
+        if self.y_bin_edges.size != ny + 1:
+            raise ValueError("y_bin_edges length must be img.shape[1] + 1.")
 
-        covmat, (mux, muy) = self._covariance_from_moments(img)
+        (mux, muy), covmat = self._covariance_from_moments(img)
         sigx = np.sqrt(covmat[0, 0])
         sigy = np.sqrt(covmat[1, 1])
         sig_major, sig_minor, theta, evecs = self._ellipse_params_from_cov(
             covmat
-        )
+            )
 
-        self.hprm_mom = {
-            "mux"       : mux, 
+        self.hprm_momenta = {
+            "mux"       : mux,
             "muy"       : muy,
             "cov"       : covmat,
-            "sigx"      : sigx, 
+            "sigx"      : sigx,
             "sigy"      : sigy,
-            "fwhmx"     : self.sigma_to_fwhm(sigx), 
+            "fwhmx"     : self.sigma_to_fwhm(sigx),
             "fwhmy"     : self.sigma_to_fwhm(sigy),
-            "sig_major" : sig_major, 
+            "sig_major" : sig_major,
             "sig_minor" : sig_minor,
-            "theta"     : self.adjust_angle(theta), 
+            "theta"     : self.adjust_angle(theta),
             "evecs"     : evecs,
-            "xcenters"  : self.xcenters, 
-            "ycenters"  : self.ycenters,
+            "x_bin_centers"  : self.x_bin_centers,
+            "y_bin_centers"  : self.y_bin_centers,
         }
-        return self.hprm_mom
+        return self.hprm_momenta
 
     def fit(self, hprm=None, img=None, useroi=True):
         """Fit a 2D Gaussian to self.img via nonlinear least squares.
@@ -695,21 +732,29 @@ class Histogram2DAnalyzer:
         Returns:
             hprm: fitted parameters dictionary; also stored in self.hprm.
         """
+        if not self.beam_visible:
+            return None
+
         if hprm is None:
-            if self.hprm_mom is None:
-                self.compute_moments()
-            hprm = self.hprm_mom
+            if self.hprm_momenta is None:
+                self.compute_momenta()
+            hprm = self.hprm_momenta
+
+        # This is a workaround for Pylance, since the clauses above
+        # guarantee hprm is calculated.
+        if hprm is None:
+            raise ValueError("No initial parameters available for fitting.")
 
         # Default to self.img if no alternative is provided.
         if img is None:
             img = self.img
 
-
-        xg, yg = np.meshgrid(self.xcenters, self.ycenters, indexing="ij")
+        xg, yg = np.meshgrid(self.x_bin_centers, self.y_bin_centers,
+                             indexing="ij")
 
         # Normalize to PDF so amplitude matches the normalized Gaussian.
-        dx = self.xcenters[1] - self.xcenters[0]
-        dy = self.ycenters[1] - self.ycenters[0]
+        dx = self.x_bin_centers[1] - self.x_bin_centers[0]
+        dy = self.y_bin_centers[1] - self.y_bin_centers[0]
         img_norm = img / (img.sum() * dx * dy)
 
         # Fit to ROI.
@@ -743,7 +788,7 @@ class Histogram2DAnalyzer:
         (sig_major, sig_minor,
          theta, evecs) = self._ellipse_params_from_cov(covmat)
 
-        self.hprm_fit = {
+        self.hprm_fitting = {
             "mux"       : popt[0],
             "muy"       : popt[1],
             "sigx"      : sx,
@@ -755,11 +800,10 @@ class Histogram2DAnalyzer:
             "sig_minor" : sig_minor,
             "theta"     : self.adjust_angle(theta),
             "evecs"     : evecs,
-            "xcenters"  : self.xcenters,
-            "ycenters"  : self.ycenters,
-            "covfit"    : covfit,
+            "x_bin_centers"  : self.x_bin_centers,
+            "y_bin_centers"  : self.y_bin_centers,
         }
-        return self.hprm_fit
+        return self.hprm_fitting
 
     def compute_threshold(self):
         """Run Kapur entropy thresholding on self.img.
@@ -783,8 +827,8 @@ class Histogram2DAnalyzer:
         thr = thrs[np.argmax(entropies)]
 
         self.optimal_threshold = thr
-        self.img_thresholded = np.where(self.img > thr, 
-                                        self.img - self.optimal_threshold, 
+        self.img_thresholded = np.where(self.img > thr,
+                                        self.img - self.optimal_threshold,
                                         0.0)
         return entropies, bin_edges, thr, nbins
 
@@ -796,7 +840,7 @@ class Histogram2DAnalyzer:
                   hprm_qck -> hprm_mom -> hprm_fit.
         """
         if hprm is None:
-            hprm = self.hprm_qck or self.hprm_mom or self.hprm_fit
+            hprm = self.hprm_project or self.hprm_momenta or self.hprm_fitting
         if hprm is None:
             print("No parameters computed.")
             return
@@ -829,12 +873,12 @@ class Histogram2DAnalyzer:
             m: the pcolormesh artist.
         """
         m = ax.pcolormesh(
-            self.xedges, self.yedges, self.img.T,
+            self.x_bin_edges, self.y_bin_edges, self.img.T,
             shading="auto", cmap="viridis",
         )
         ax.set_aspect("equal", adjustable="box")
-        ax.set_xlim(self.xedges[0], self.xedges[-1])
-        ax.set_ylim(self.yedges[0], self.yedges[-1])
+        ax.set_xlim(self.x_bin_edges[0], self.x_bin_edges[-1])
+        ax.set_ylim(self.y_bin_edges[0], self.y_bin_edges[-1])
         if colorbar:
             fig.colorbar(m, ax=ax, label="count")
         return m
@@ -853,7 +897,7 @@ class Histogram2DAnalyzer:
         """Plot the histogram with sigma ellipses and principal directions.
 
         Arguments:
-            hprm         : moments/fit dict; defaults to self.hprm_mom.
+            hprm         : momenta/fit dict; defaults to self.hprm_momenta.
             fig          : optional figure to plot on; created if None.
             ax           : optional axis to plot on; created if None.
             title        : axes title.
@@ -866,10 +910,14 @@ class Histogram2DAnalyzer:
             fig, ax
         """
         if hprm is None:
-            print("No parameters provided; using the calculated from moments.")
-            if self.hprm_mom is None:
-                self.compute_moments()
-            hprm = self.hprm_mom
+            if self.hprm_momenta is None:
+                self.compute_momenta()
+            hprm = self.hprm_momenta
+
+        # This is a workaround for Pylance, since the clauses above
+        # guarantee hprm is calculated.
+        if hprm is None:
+            raise ValueError("No initial parameters available for fitting.")
 
         if ax is None:
             fig, ax = plt.subplots(figsize=(10, 6))
