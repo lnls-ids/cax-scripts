@@ -546,9 +546,9 @@ class Histogram2DAnalyzer:
                 None in self.x_bin_edges or None in self.y_bin_edges):
                 raise ValueError("x_bin_edges or y_bin_edges is None.")
         except Exception as err:
-            print(f"Warning: {err}\n"
-                  "Could not determine bin edges from provided values."
-                  "\n Extracting from image shape.")
+            # print(f"Warning: {err}\n"
+            #       "Could not determine bin edges from provided values."
+            #       "\n Extracting from image shape.")
             self.x_bin_edges = np.arange(self.img.shape[0]+1)
             self.y_bin_edges = np.arange(self.img.shape[1]+1)
 

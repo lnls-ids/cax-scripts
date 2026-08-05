@@ -38,7 +38,7 @@ from   IPython.display import display as ipydisplay
 
 from scipy.optimize import curve_fit
 
-# from . import utils
+from . import utils
 from caxscripts.image_statistics import Histogram2DAnalyzer
 
 # Threshold for peak-to-average ratio acceptance of image.
