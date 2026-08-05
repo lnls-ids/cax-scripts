@@ -538,12 +538,19 @@ class Histogram2DAnalyzer:
 
     def _bin_centers(self, x_bin_edges, y_bin_edges):
         """Calculate x and y bin centers from the stored edges."""
-        if (x_bin_edges is None) or (y_bin_edges is None):
-            self.x_bin_edges = np.arange(self.img.shape[0]+1)
-            self.y_bin_edges = np.arange(self.img.shape[1]+1)
-        else:
+        try:
             self.x_bin_edges = np.asarray(x_bin_edges)
             self.y_bin_edges = np.asarray(y_bin_edges)
+
+            if (self.x_bin_edges is None or self.y_bin_edges is None or
+                None in self.x_bin_edges or None in self.y_bin_edges):
+                raise ValueError("x_bin_edges or y_bin_edges is None.")
+        except Exception as err:
+            print(f"Warning: {err}\n"
+                  "Could not determine bin edges from provided values."
+                  "\n Extracting from image shape.")
+            self.x_bin_edges = np.arange(self.img.shape[0]+1)
+            self.y_bin_edges = np.arange(self.img.shape[1]+1)
 
         self.x_bin_centers = 0.5 * (self.x_bin_edges[:-1] +
                                     self.x_bin_edges[1:])

@@ -448,9 +448,9 @@ class DataScan:
             y_bin_edges = np.array(step_data['dvf_B1']['attrs'].get('y_bin_edges', None))
 
             a1_attrs = step_data.get('dvf_A1', {}).get('attrs', {})
-            x_bin_edges_a1 = np.array(a1_attrs.get('x_bin_edges', None))
-            y_bin_edges_a1 = np.array(a1_attrs.get('y_bin_edges', None))
-            if (x_bin_edges_a1 == None) or (y_bin_edges_a1 == None):
+            x_bin_edges_a1 = np.asarray(a1_attrs.get('x_bin_edges', None))
+            y_bin_edges_a1 = np.asarray(a1_attrs.get('y_bin_edges', None))
+            if (None in x_bin_edges_a1) or (None in y_bin_edges_a1):
                 x_bin_edges_a1 = np.arange(image_a1.shape[0] + 1)
                 y_bin_edges_a1 = np.arange(image_a1.shape[1] + 1)
 
