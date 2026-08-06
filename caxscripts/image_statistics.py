@@ -632,7 +632,7 @@ class Histogram2DAnalyzer:
         norm = 1.0 / (2 * np.pi * np.sqrt(np.linalg.det(cov)))
         return norm * np.exp(exponent)
 
-    def _number_of_bins(self):
+    def _number_of_bins(self) -> int:
         """Return a bin count for threshold analysis.
 
         Uses Freedman-Diaconis as the primary estimate, capped at 1024,
@@ -646,7 +646,7 @@ class Histogram2DAnalyzer:
         return max(fd_nbins, sturges_nbins, 2)
 
     @staticmethod
-    def _kapur_entropy(freq, k):
+    def _kapur_entropy(freq: np.ndarray, k: int) -> float:
         """Kapur cross-class entropy for a histogram split at bin index k.
 
         Arguments:
