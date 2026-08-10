@@ -25,17 +25,22 @@ Usage::
     tx_01.scan_animation(filename="tx_pass01.gif")
 """
 
+from functools import partial
 import os
 import re
+from typing import Any
 import warnings
 
 import h5py
-import numpy as np
+from matplotlib.text import Text
+from matplotlib.axes import Axes
+# from matplotlib import colormaps
+from matplotlib.animation import FuncAnimation
 import matplotlib.pyplot as plt
-from   matplotlib.animation import FuncAnimation
-from   IPython.display import HTML
-from   IPython.display import display as ipydisplay
+from IPython.display import HTML
+from IPython.display import display as ipydisplay
 
+import numpy as np
 from scipy.optimize import curve_fit
 
 from . import utils
@@ -67,19 +72,23 @@ _SCAN_TYPE_CAUSTIC = 'caustic'
 _UNIT_BY_SCALE = {1e-3: 'm', 1: 'mm', 1e3: 'μm', 1e6: 'nm'}
 
 
-def _scale_label(base_label, scale):
+def _scale_label(base_label: str | list[str], scale: float) -> str:
     """Return *base_label* with a unit suffix derived from *scale*.
 
     Common scales are mapped to human-readable units (e.g. 1000 → ``'mm'``,
     1e6 → ``'μm'``).  Anything else shows the raw multiplier.
     """
+    if isinstance(base_label, list):
+        base_lbl = base_label[0]
+    else:
+        base_lbl = base_label
     if scale == 1:
-        return base_label
+        return base_lbl
     unit = _UNIT_BY_SCALE.get(scale, f'×{scale}')
     return f'{base_label} ({unit})'
 
 
-def _is_pixel_edges(edges):
+def _is_pixel_edges(edges: np.ndarray | None) -> bool:
     """Return True if *edges* are pixel indices (0, 1, 2, ..., n)."""
     if edges is None:
         return True
@@ -88,7 +97,7 @@ def _is_pixel_edges(edges):
             and arr[0] == 0 and np.allclose(np.diff(arr), 1.0))
 
 
-def _resolve_attr(obj, attr_path, default=None):
+def _resolve_attr(obj, attr_path: str, default=None):
     """Traverse a dotted attribute path like ``'analyzer.x_bin_edges'``."""
     for part in attr_path.split('.'):
         if obj is None:
@@ -97,19 +106,25 @@ def _resolve_attr(obj, attr_path, default=None):
     return obj if obj is not None else default
 
 
-def _extract_metadata_value(val):
+def _extract_metadata_value(val: np.ndarray | list | float | int) -> float:
     """Return a scalar float from a metadata entry (array, list, or scalar)."""
     if isinstance(val, (list, np.ndarray)):
         return float(val[0])
     return float(val)
 
-def _group_all_attrs(step_data):
-    """
-    Group all attributes of a step entry in the HDF5 file
-    (identified as ``'attrs'``) into a single dictionary.
+
+def _group_all_attrs(step_data: dict) -> dict:
+    """Group all attributes of a step entry in the HDF5 file.
+
+    They are identified as 'attrs' in a single dictionary.
+
+    Args:
+        step_data (dict): Dictionary representing a step in the HDF5 file.
     """
     if 'attrs' in step_data:
         step_attrs = step_data['attrs']
+    else:
+        step_attrs = {}
     for key in step_data.keys():
         if 'attrs' in step_data[key]:
             extra_attrs = step_data[key]['attrs']
@@ -119,21 +134,22 @@ def _group_all_attrs(step_data):
 
     return step_attrs
 
-def _find_slit_blade_device(metadata_list, scan_device):
+
+def _find_slit_blade_device(metadata_list: list, scan_device: str) -> str:
     """Find which device's blade positions actually vary across steps.
 
     Scans metadata from all steps and returns the device prefix whose
     ``.top`` / ``.bottom`` / ``.left`` / ``.right`` keys are non-constant.
     Falls back to *scan_device* when no varying device is found.
     """
-    _BLADE_KEYS = ('top', 'bottom', 'left', 'right')
+    _blade_keys = ('top', 'bottom', 'left', 'right')
 
     # Collect all device prefixes that have blade-position keys.
     candidates = set()
     for meta in metadata_list:
         for key in meta:
             parts = key.rsplit('.', 1)
-            if len(parts) == 2 and parts[1] in _BLADE_KEYS:
+            if len(parts) == 2 and parts[1] in _blade_keys:
                 candidates.add(parts[0])
 
     if scan_device and scan_device not in candidates:
@@ -147,7 +163,7 @@ def _find_slit_blade_device(metadata_list, scan_device):
         cy_set = set()
         for meta in metadata_list:
             vals = {}
-            for side in _BLADE_KEYS:
+            for side in _blade_keys:
                 v = meta.get(f'{dev}.{side}')
                 if v is not None:
                     vals[side] = _extract_metadata_value(v)
@@ -159,8 +175,13 @@ def _find_slit_blade_device(metadata_list, scan_device):
     return scan_device
 
 
-def _scan_variable_from_metadata(metadata, scan_type, scan_device, scan_motor,
-                                  blade_device=None):
+def _scan_variable_from_metadata(
+        metadata: dict,
+        scan_device: str,
+        scan_motor: str,
+        ) -> float | tuple[float, float] | None:
+    # scan_type: str,
+    # blade_device: str = ""
     """Extract the scanned-variable value for a single step.
 
     For standard scans reads ``{scan_device}.{scan_motor}`` from metadata.
@@ -174,7 +195,7 @@ def _scan_variable_from_metadata(metadata, scan_type, scan_device, scan_motor,
     #     bottom = _extract_metadata_value(metadata.get(f'{dev}.bottom', 0))
     #     left   = _extract_metadata_value(metadata.get(f'{dev}.left',   0))
     #     right  = _extract_metadata_value(metadata.get(f'{dev}.right',  0))
-        
+
     #     # @Arnaldo, I'm not sure this calculation of slit center is correct.
     #     slit_center_x = (left + right) / 2
     #     slit_center_y = (top + bottom) / 2
@@ -191,16 +212,26 @@ def _scan_variable_from_metadata(metadata, scan_type, scan_device, scan_motor,
     return _extract_metadata_value(val)
 
 
-def _build_beam_properties(analyzer, analysis_mode, exptime=1.0, droi=4):
+def _build_beam_properties(
+        analyzer: Histogram2DAnalyzer,
+        analysis_mode: str,
+        exptime: float = 1.0,
+        droi: int = 4
+        ) -> dict | None:
     """Build a flat beam-properties dict from a Histogram2DAnalyzer.
 
     Returns
     -------
-    dict or None
+    dict | None
         None when the beam is not visible.
     """
-    _MODE2HPRM = {'projection': 'project', 'momenta': 'momenta', 'fitting': 'fitting', 'all': 'all'}
-    hprm_key = _MODE2HPRM.get(analysis_mode, analysis_mode)
+    _mode2hprm = {
+        'projection' : 'project',
+        'momenta'    : 'momenta',
+        'fitting'    : 'fitting',
+        'all'        : 'all'
+    }
+    hprm_key = _mode2hprm.get(analysis_mode, analysis_mode)
 
     if not analyzer.beam_visible:
         return None
@@ -295,11 +326,24 @@ class DataStep:
         Exposure time in seconds (used for intensity normalisation).
     """
 
-    def __init__(self, step_index, metadata, image=None, x_bin_edges=None, y_bin_edges=None, 
-                 image_slit=None, x_bin_edges_slit=None, y_bin_edges_slit=None,
-                 scan_type=None, scan_device=None, scan_motor=None,
-                 analysis_mode='projection', droi=4, exptime=1.0,
-                 blade_device=None):
+    def __init__(self,
+                 step_index: int,
+                 metadata: dict,
+                 image: np.ndarray | None = None,
+                 x_bin_edges: np.ndarray | None = None,
+                 y_bin_edges: np.ndarray | None = None,
+                 x_bin_edges_slit: np.ndarray | None = None,
+                 y_bin_edges_slit: np.ndarray | None = None,
+                 image_slit: np.ndarray | None = None,
+                 scan_device   : str = "",
+                 scan_motor    : str = "",
+                 analysis_mode : str = 'projection',
+                 droi: int = 4,
+                 exptime: float = 1.0,
+                 ) -> None:
+        #  scan_type=None,
+        #  blade_device=None
+        """Initialize a DataStep with metadata and image data."""
         self.step_index          = step_index
         self.metadata            = metadata
         self.image_slit          = image_slit
@@ -310,13 +354,15 @@ class DataStep:
         self.analyzer            = None
 
         self.scan_variable_value = _scan_variable_from_metadata(
-            metadata, scan_type, scan_device, scan_motor,
-            blade_device=blade_device,
+            metadata, scan_device, scan_motor
         )
         if image is not None:
             img_arr = np.asarray(image.T, dtype=float)
             self.analyzer = Histogram2DAnalyzer(
-                img_arr, x_bin_edges=x_bin_edges, y_bin_edges=y_bin_edges, droi=droi,
+                img_arr,
+                x_bin_edges=x_bin_edges,
+                y_bin_edges=y_bin_edges,
+                droi=droi,
             )
             if self.analyzer.beam_visible:
                 self.analyzer.analyze(analysis_mode)
@@ -330,7 +376,7 @@ class DataStep:
     # ------------------------------------------------------------------
 
     @property
-    def image(self):
+    def image(self) -> np.ndarray | None:
         """Primary beam image (float64).  Backed by ``self.analyzer.img``."""
         if self.analyzer is not None:
             return self.analyzer.img
@@ -340,7 +386,7 @@ class DataStep:
     #  Image plotting
     # ------------------------------------------------------------------
 
-    def plot_image(self, analysis_mode=None, **kwargs):
+    def plot_image(self, analysis_mode: str | None = None, **kwargs):
         """Plot the beam image with fitting ellipses.
 
         Delegates to :meth:`Histogram2DAnalyzer.plot`.
@@ -348,10 +394,10 @@ class DataStep:
         Parameters
         ----------
         analysis_mode : str or None
-            Which HPRM dict to use (``'projection'``, ``'momenta'``, ``'fitting'``).
+            Which HPRM dict to use ('projection', 'momenta', 'fitting').
             Defaults to the mode used during construction.
         **kwargs
-            Forwarded to ``Histogram2DAnalyzer.plot()``.
+            Forwarded to 'Histogram2DAnalyzer.plot()'.
 
         Returns
         -------
@@ -365,7 +411,8 @@ class DataStep:
             hprm = getattr(self.analyzer, f'hprm_{mode}', None)
         return self.analyzer.plot(hprm=hprm, **kwargs)
 
-    def __repr__(self):
+    def __repr__(self) -> str:
+        """Return a concise string representation of this DataStep."""
         visible = (self.beam_properties is not None
                    and self.beam_properties.get('beam_visible'))
         val = self.scan_variable_value
@@ -377,7 +424,10 @@ class DataStep:
             return (f"<DataStep #{self.step_index}: "
                     f"var={val:.4g}, "
                     f"{'visible' if visible else 'no beam'}>")
-        return f"<DataStep #{self.step_index}: {'visible' if visible else 'no beam'}>"
+        return (
+            f"<DataStep #{self.step_index}: "
+            f"{'visible' if visible else 'no beam'}>"
+            )
 
 
 # ===========================================================================
@@ -403,9 +453,19 @@ class DataScan:
         Motor being scanned.
     """
 
-    def __init__(self, scan_index, scan_type, scan_variable,
-                 scan_dict, scan_device, scan_motor, scan_name,
-                 analysis_mode, _droi):
+    def __init__(
+            self,
+            scan_index: int,
+            scan_type: str,
+            scan_variable: str,
+            scan_dict: dict,
+            scan_device: str,
+            scan_motor: str,
+            scan_name: str,
+            analysis_mode: str,
+            _droi: int
+            ) -> None:
+        """Initialize a DataScan with metadata and steps."""
         self.scan_index    = scan_index
         self.scan_type     = scan_type
         self.scan_variable = scan_variable
@@ -413,17 +473,18 @@ class DataScan:
         self.scan_motor    = scan_motor
         self.scan_name     = scan_name
         self.analysis_mode = analysis_mode
-        self._droi         = _droi 
+        self._droi         = _droi
         self.observables   = []
         self.step_range    = slice(0, None)  # slice for selecting steps
 
         self._load(scan_dict)
+
     # ------------------------------------------------------------------
     #  Discovery
     # ------------------------------------------------------------------
 
-
-    def _load(self, scan_dict):
+    def _load(self, scan_dict: dict) -> None:
+        """Load all steps from the scan dictionary."""
         step_keys = sorted(scan_dict.keys())
         if not step_keys:
             raise ValueError("HDF5 file contains no scan groups.")
@@ -444,16 +505,26 @@ class DataScan:
                 exptime = step_data['dvf_A1']['attrs'].get('expo_time', 1.0)
 
             # AQUI
-            x_bin_edges = np.array(step_data['dvf_B1']['attrs'].get('x_bin_edges', None))
-            y_bin_edges = np.array(step_data['dvf_B1']['attrs'].get('y_bin_edges', None))
+            x_bin_edges = np.array(
+                step_data['dvf_B1']['attrs'].get('x_bin_edges', None)
+                )
+            y_bin_edges = np.array(
+                step_data['dvf_B1']['attrs'].get('y_bin_edges', None)
+                )
 
             a1_attrs = step_data.get('dvf_A1', {}).get('attrs', {})
-            x_bin_edges_a1 = np.asarray(a1_attrs.get('x_bin_edges', None))
-            y_bin_edges_a1 = np.asarray(a1_attrs.get('y_bin_edges', None))
-            if (None in x_bin_edges_a1) or (None in y_bin_edges_a1):
+            x_edges_raw = a1_attrs.get('x_bin_edges')
+            y_edges_raw = a1_attrs.get('y_bin_edges')
+
+            if x_edges_raw is not None and y_edges_raw is not None:
+                x_bin_edges_a1 = np.asarray(x_edges_raw)
+                y_bin_edges_a1 = np.asarray(y_edges_raw)
+            elif image_a1 is not None:
                 x_bin_edges_a1 = np.arange(image_a1.shape[0] + 1)
                 y_bin_edges_a1 = np.arange(image_a1.shape[1] + 1)
-
+            else:
+                x_bin_edges_a1 = None
+                y_bin_edges_a1 = None
 
             step = DataStep(
                 step_index=step_idx,
@@ -464,7 +535,7 @@ class DataScan:
                 image_slit=image_a1,     # secondary: DVF A1
                 x_bin_edges_slit=x_bin_edges_a1,
                 y_bin_edges_slit=y_bin_edges_a1,
-                scan_type=self.scan_name,
+                # scan_type=self.scan_name,
                 scan_device=self.scan_device,
                 scan_motor=self.scan_motor,
                 analysis_mode=self.analysis_mode,
@@ -473,9 +544,9 @@ class DataScan:
                 # blade_device=blade_device,
             )
             self.steps.append(step)
-    
+
     @property
-    def available_observables(self):
+    def available_observables(self) -> list[str]:
         """List all plottable observable names.
 
         Includes multi-component names (``'centroid'``, ``'fwhm'``,
@@ -491,12 +562,12 @@ class DataScan:
                 meta_keys.append(k)
             elif isinstance(v, np.ndarray) and v.ndim == 0:
                 meta_keys.append(k)
-            elif isinstance(v, np.ndarray) and v.ndim == 1:# and v.size == 1:
+            elif isinstance(v, np.ndarray) and v.ndim == 1:  # and v.size == 1:
                 meta_keys.append(k)
 
         return list(_COMPONENT_MAP.keys()) + _COMPONENT_FLAT + meta_keys
 
-    def describe(self):
+    def describe(self) -> None:
         """Print an overview of this scan and its available observables."""
         name = self.scan_variable or '(unknown)'
         print(f"Scan #{self.scan_index}  [{self.scan_type}]")
@@ -506,17 +577,20 @@ class DataScan:
         print(f"  steps    : {len(self.steps)}")
         obs = self.available_observables
         print(f"  observables ({len(obs)}):")
-        for o in obs: 
+        for o in obs:
             print("\t"+o, end=";\n")
 
     # ------------------------------------------------------------------
     #  Internal data helpers
     # ------------------------------------------------------------------
 
-    def _steps_in_range(self):
-        return self.steps[self.step_range] # X[slice(a, b, c)] = X[a:b:c] 
+    def _steps_in_range(self) -> list[DataStep]:
+        return self.steps[self.step_range]  # X[slice(a, b, c)] = X[a:b:c]
 
-    def _get_observable_value(self, step, observable):
+    def _get_observable_value(self,
+                              step: DataStep,
+                              observable: str
+                              ) -> float:
         """Return the scalar value of *observable* for a single step."""
         # 1. beam_properties.
         if step.beam_properties and observable in step.beam_properties:
@@ -532,40 +606,53 @@ class DataScan:
 
         return float('nan')
 
-    def resolve_observable(self, observable):
+    def resolve_observable(
+            self,
+            observable: str | list[str]
+            ) -> tuple[
+                np.ndarray,
+                np.ndarray | list[np.ndarray],
+                str | list[str]]:
         """Return ``(x_values, y_values)`` arrays for an observable.
 
         Multi-component observables (``'centroid'``, ``'fwhm'``,
         ``'intensity'``) return *y_values* as a *list* of arrays (one per
         component).  Scalar observables return a single 1-D array.
 
-        Parameters
-        ----------
-        observable : str
+        Args:
+            observable : str
 
-        Returns
-        -------
-        xvals : np.ndarray
-            Scanned-variable value for each step.
-        yvals : np.ndarray or list of np.ndarray
-            Observable values or list of observable values
-        ylabels : str or list
-            observable names or list of observable components
+        Returns:
+            xvals : np.ndarray
+                Scanned-variable value for each step.
+            yvals : np.ndarray or list of np.ndarray
+                Observable values or list of observable values
+            ylabels : str or list
+                observable names or list of observable components
         """
         if observable in _COMPONENT_MAP:
             components = _COMPONENT_MAP[observable]
-            results = [self.resolve_observable(c) for c in components]
+            results = np.array([
+                self.resolve_observable(c)
+                for c in components
+                ])
             # Returns xvals (np.ndarray) and yvals (list[np.ndarray])
-            return results[0][0], [r[1] for r in results], [r[2] for r in results]
+            return (
+                results[0][0],
+                np.array([r[1] for r in results]),
+                [r[2] for r in results]
+                )
 
         steps = self._steps_in_range()
         xvals = np.array([
-            (step.scan_variable_value if not isinstance(step.scan_variable_value, tuple)
+            (step.scan_variable_value
+             if not isinstance(step.scan_variable_value, tuple)
              else step.scan_variable_value[0])
-            if step.scan_variable_value is not None else float('nan')
-            for step in steps
+             if step.scan_variable_value is not None else float('nan')
+             for step in steps
         ])
-        yvals = np.array([self._get_observable_value(step, observable)
+        obs = observable[0] if isinstance(observable, list) else observable
+        yvals = np.array([self._get_observable_value(step, obs)
                           for step in steps])
         return xvals, yvals, observable
 
@@ -573,8 +660,14 @@ class DataScan:
     #  Plotting
     # ------------------------------------------------------------------
 
-    def plot_observables(self, observables=None, first_item=0, last_item=None,
-                         droi=8, x_scale=1.0, y_scale=1.0):
+    def plot_observables(
+            self,
+            observables: list[str] | None = None,
+            first_item=0,
+            last_item=None,
+            x_scale=1.0,
+            y_scale=1.0
+            ) -> tuple:
         """Plot selected observables versus the scanned variable.
 
         Multi-component observables (``'centroid'``, ``'fwhm'``,
@@ -608,10 +701,16 @@ class DataScan:
         if self.scan_type == _SCAN_TYPE_SLIT:
             raise NotImplementedError()
 
-        return self._plot_default(observables, x_scale=x_scale,
-                                  y_scale=y_scale)
+        return self._plot_default(
+            observables, x_scale=x_scale, y_scale=y_scale
+            )
 
-    def _plot_default(self, observables, x_scale=1.0, y_scale=1.0):
+    def _plot_default(
+            self,
+            observables: list[str] | None = None,
+            x_scale=1.0,
+            y_scale=1.0
+            ) -> tuple:
         """Standard line-plot layout for mirror / general scans."""
         observable_names = observables if observables is not None \
                            else self.observables
@@ -654,9 +753,11 @@ class DataScan:
                             marker='o', label=obs_name)
                     for lb, label in enumerate(step_labels):
                         ax.annotate(label,
-                                    (xvals[lb] * x_scale, yvals_j[lb] * y_scale),
-                                    textcoords='offset points',
-                                    xytext=(5, 5), fontsize=8)
+                                    (xvals[lb] * x_scale,
+                                     yvals_j[lb] * y_scale),
+                                     textcoords='offset points',
+                                     xytext=(5, 5),
+                                     fontsize=8)
             else:
                 ax.plot(xvals * x_scale, yvals * y_scale,
                         marker='o', label=obs_name)
@@ -680,7 +781,7 @@ class DataScan:
 
     #######
     # A Wasp's nest -- Not usable yet, to be replaced by a more robust method
-    ###### 
+    ######
     # def _plot_slit(self, observables, first_item=0, last_item=None):
     #     """Special plot for slit scans: heatmap of observables.
 
@@ -747,8 +848,10 @@ class DataScan:
     #             cx_u = np.unique(cx_r)
     #             cy_u = np.unique(cy_r)
     #             unique_pairs = set(zip(
-    #                 tuple(round(float(cx_r[k]), ndec) for k in range(len(cx))),
-    #                 tuple(round(float(cy_r[k]), ndec) for k in range(len(cy))),
+    #                 tuple(round(float(cx_r[k]), ndec)
+    #                 for k in range(len(cx))),
+    #                 tuple(round(float(cy_r[k]), ndec)
+    #                 for k in range(len(cy))),
     #             ))
     #             if cx_u.size * cy_u.size == len(unique_pairs):
     #                 cx_map = {v: j for j, v in enumerate(cx_u)}
@@ -821,7 +924,9 @@ class DataScan:
 
     #         if use_pcolormesh:
     #             if grid_mode == 'step_meta':
-    #                 col_u, row_u, col_arr, row_arr, cx_f, cy_f, mask_arr = grid
+    #                 (col_u, row_u,
+    #                  col_arr, row_arr,
+    #                  cx_f, cy_f, mask_arr) = grid
     #                 yv_f = yv[mask_arr]  # filter to grid steps only
     #                 ny, nx = row_u.size, col_u.size
     #                 Z_sum = np.zeros((ny, nx))
@@ -856,7 +961,9 @@ class DataScan:
     #                 Z = np.where(Z_cnt > 0, Z_sum / Z_cnt, np.nan)
     #                 CX, CY = np.meshgrid(cx_u, cy_u)
 
-    #             mesh = ax.pcolormesh(CX, CY, Z, shading='auto', cmap='viridis')
+    #             mesh = ax.pcolormesh(CX, CY, Z,
+    #                                  shading='auto',
+    #                                  cmap='viridis')
     #             plt.colorbar(mesh, ax=ax, label=name)
     #         else:
     #             sc = ax.scatter(cx_arr, cy_arr, c=yv, cmap='viridis',
@@ -875,7 +982,7 @@ class DataScan:
     #  Statistics
     # ------------------------------------------------------------------
 
-    def mean_value(self, observable):
+    def mean_value(self, observable: str) -> float | dict:
         """Mean of an observable across steps.
 
         Returns a dict for multi-component observables, else a float.
@@ -886,9 +993,9 @@ class DataScan:
                     for i, yvals_i in enumerate(yvals)}
         return float(np.nanmean(yvals))
 
-    def std_deviation(self, observable):
+    def std_deviation(self, observable: str) -> float | dict:
         """Standard deviation of an observable across steps."""
-        _, yvals = self.resolve_observable(observable)
+        _, yvals, _ = self.resolve_observable(observable)
         if isinstance(yvals, list):
             return {f'{observable}_{i}': float(np.nanstd(yvals_i))
                     for i, yvals_i in enumerate(yvals)}
@@ -897,98 +1004,125 @@ class DataScan:
     # ------------------------------------------------------------------
     #  Animation
     # ------------------------------------------------------------------
-
-    def scan_animation(self, observables=None, filename=None, fps=2,
-                       save_fmt='gif', x_scale=1.0, y_scale=1.0,
-                       x_extent=(-0.74, 0.74), y_extent=(-0.5, 0.5)):
-        """Animate beam images with observable trace markers.
-
-        Slit scans use a dual-image layout (DVF A1 + DVF B1).
-        Other scans use a single-image layout.
-
-        DVF B1 axes are fixed to *x_extent* / *y_extent* (the real
-        detector dimensions in mm).  DVF A1 axes use the global extent
-        from the A1 bin edges across all steps.
-
-        Parameters
-        ----------
-        observables : list of str or None
-            If None, uses ``self.observables[:1]``.
-        filename : str or None
-            If provided, save to file; otherwise display inline.
-        fps : int
-            Frames per second.
-        save_fmt : str
-            ``'gif'`` or ``'mp4'``.
-        x_scale : float
-            Multiplicative factor for the x-axis (visual only).
-        y_scale : float
-            Multiplicative factor for the y-axis (visual only).
-        x_extent : tuple of float or None
-            (x_min, x_max) in mm for the DVF B1 axes.
-            Defaults to the real detector half-aperture.
-        y_extent : tuple of float or None
-            (y_min, y_max) in mm for the DVF B1 axes.
-        """
+    def scan_animation(self, allargs: tuple) -> FuncAnimation | None:
+        """Select the appropriate animation method based on scan type."""
         if self.scan_type == _SCAN_TYPE_SLIT:
-            return self._animate_slit(observables, filename, fps, save_fmt,
-                                      x_scale=x_scale, y_scale=y_scale,
-                                      x_extent=x_extent, y_extent=y_extent)
-        return self._animate_default(observables, filename, fps, save_fmt,
-                                     x_scale=x_scale, y_scale=y_scale,
-                                     x_extent=x_extent, y_extent=y_extent)
+            return self._animate_slit(*allargs)
+        return self._animate_default(*allargs)
 
-    def _animate_default(self, observable, filename, fps, save_fmt,
-                         x_scale=1.0, y_scale=1.0,
-                         x_extent=(-0.74, 0.74), y_extent=(-0.5, 0.5)):
-        """Standard single-image animation.
-
-        B1 image axes are fixed to *x_extent*/*y_extent* (mm).
-        A1 image axes use the global extent from A1 bin edges.
-        Each frame renders with per-step bin edges via ``pcolormesh``.
-        """
-        if observable is not None:
-            obs_name = observable
-        else:
-            obs_name = self.observables[:1]
-            print(f"Warning: no observable set, using: {obs_name}")
-        if not obs_name:
-            print("No observables set.")
-            return
-
-        steps = self._steps_in_range()
-        xvals, yvals_list, ylabels = self.resolve_observable(obs_name)
-
-        images      = [step.image if step.image is not None
-                    else np.zeros((10, 10)) for step in steps]
-        images_slit = [step.image_slit if step.image_slit is not None
-                       else np.zeros((10, 10)) for step in steps]
-
-        vmin_b1   = min(img.min() for img in images)
-        vmax_b1   = max(img.max() for img in images)
-        vmin_slit = min(img.min() for img in images_slit) if images_slit else 0
-        vmax_slit = max(img.max() for img in images_slit) if images_slit else 1
-
-        # --- B1 axes limits ------------------------------------------------
+    def _set_extents(
+            self,
+            x_extent : tuple[float, float] | None,
+            y_extent : tuple[float, float] | None,
+            x_scale  : float,
+            y_scale  : float,
+            steps) -> tuple:
+        """Determine the display extents for B1 and A1 images."""
         if x_extent is not None and y_extent is not None:
             b1_xlim = (x_extent[0] * x_scale, x_extent[1] * x_scale)
             b1_ylim = (y_extent[0] * y_scale, y_extent[1] * y_scale)
         else:
             # Fallback: global extent from B1 bin edges
             all_x = [step.analyzer.x_bin_edges for step in steps
-                     if step.analyzer is not None]
+                    if step.analyzer is not None]
             all_y = [step.analyzer.y_bin_edges for step in steps
-                     if step.analyzer is not None]
+                    if step.analyzer is not None]
             if all_x and all_y:
                 b1_xlim = (min(e[0] for e in all_x) * x_scale,
-                           max(e[-1] for e in all_x) * x_scale)
+                        max(e[-1] for e in all_x) * x_scale)
                 b1_ylim = (min(e[0] for e in all_y) * y_scale,
-                           max(e[-1] for e in all_y) * y_scale)
+                        max(e[-1] for e in all_y) * y_scale)
             else:
                 b1_xlim = None
                 b1_ylim = None
+        return b1_xlim, b1_ylim
 
-        # --- A1 axes limits (global extent from A1 edges) ------------------
+    # --- Helper: resolve edges for one frame ---------------------------
+    def _edges_for_frame(self,
+            step: Any,
+            attr_x: str,
+            attr_y: str,
+            extent_x: tuple[float, float] | None,
+            extent_y: tuple[float, float] | None,
+            data: np.ndarray,
+            x_scale: float,
+            y_scale: float
+            ) -> tuple[np.ndarray, np.ndarray]:
+        """Return (xe, ye) arrays in display units for *pcolormesh*.
+
+        *data* is the C array (shape ``(nrows, ncols)``) that will be
+        passed to ``pcolormesh``.  Edge lengths are derived from
+        ``data.shape`` so they are always consistent.
+        """
+        xe = _resolve_attr(step, attr_x)
+        ye = _resolve_attr(step, attr_y)
+        if not _is_pixel_edges(xe) and not _is_pixel_edges(ye):
+            return (np.asarray(xe) * x_scale,
+                    np.asarray(ye) * y_scale)
+        ncols, nrows = data.shape[1], data.shape[0]
+        if extent_x is not None and extent_y is not None:
+            return (np.linspace(extent_x[0], extent_x[1], ncols + 1) * x_scale,
+                    np.linspace(extent_y[0], extent_y[1], nrows + 1) * y_scale)
+        # Last resort: pixel indices
+        return (np.arange(ncols + 1, dtype=float),
+                np.arange(nrows + 1, dtype=float))
+
+    def _animate_default_update(
+            self,
+            frame       : int,
+            steps       : list,
+            images      : list,
+            images_slit : list,
+            mesh_refs   : list,
+            ax_img      : Axes,
+            ax_slit     : Axes,
+            step_title  : Text,
+            trace_mark  : list,
+            xv          : np.ndarray,
+            yv_list     : list[np.ndarray] | np.ndarray,
+            x_scale     : float,
+            y_scale     : float,
+            x_extent    : tuple[float, float],
+            y_extent    : tuple[float, float],
+            vmin_b1     : float,
+            vmax_b1     : float,
+            vmin_slit   : float,
+            vmax_slit   : float
+            ) -> list:
+        """Update function for animation."""
+        mesh_refs[0].remove()
+        xe_b, ye_b = self._edges_for_frame(
+            steps[frame], 'analyzer.x_bin_edges', 'analyzer.y_bin_edges',
+            x_extent, y_extent, images[frame].T, x_scale, y_scale)
+        mesh_refs[0] = ax_img.pcolormesh(
+            xe_b, ye_b, images[frame].T, shading='auto',
+            cmap='viridis', vmin=vmin_b1, vmax=vmax_b1)
+        artists = [mesh_refs[0], step_title]
+
+        if mesh_refs[1] is not None and images_slit[frame] is not None:
+            mesh_refs[1].remove()
+            xe_a, ye_a = self._edges_for_frame(
+                steps[frame], 'x_bin_edges_slit', 'y_bin_edges_slit',
+                x_extent, y_extent, images_slit[frame], x_scale, y_scale)
+            mesh_refs[1] = ax_slit.pcolormesh(
+                xe_a, ye_a, images_slit[frame], shading='auto',
+                cmap='viridis', vmin=vmin_slit, vmax=vmax_slit)
+            artists.append(mesh_refs[1])
+
+        # step_title.set_text(f'Step {frame}')
+        step_title.set_text(f'Step {frame}')
+        for j, mk in enumerate(trace_mark):
+            if isinstance(yv_list, list):
+                mk.set_data([xv[frame] * x_scale],
+                            [yv_list[j][frame] * y_scale])
+            else:
+                mk.set_data([xv[frame] * x_scale],
+                            [yv_list[frame] * y_scale])
+        artists.extend(trace_mark)
+        return artists
+
+    def _set_axes_limits(self, steps, x_scale, y_scale) -> tuple:
+        """Determine the display extents for A1 images."""
         a1_all_x = [step.x_bin_edges_slit for step in steps
                     if step.x_bin_edges_slit is not None]
         a1_all_y = [step.y_bin_edges_slit for step in steps
@@ -1001,43 +1135,88 @@ class DataScan:
         else:
             a1_xlim = None
             a1_ylim = None
+        return a1_xlim, a1_ylim
 
-        # --- Helper: resolve edges for one frame ---------------------------
-        def _edges_for_frame(step, attr_x, attr_y, extent_x, extent_y, data):
-            """Return (xe, ye) arrays in display units for *pcolormesh*.
+    def _animate_default(
+            self,
+            observable: str | list[str] | None = None,
+            filename: str | None = None,
+            fps: int = 2,
+            save_fmt: str = 'gif',
+            x_scale: float = 1.0,
+            y_scale: float = 1.0,
+            x_extent: tuple[float, float] = (-0.74, 0.74),
+            y_extent: tuple[float, float] = (-0.5, 0.5)
+            ) -> FuncAnimation | None:
+        """Standard single-image animation.
 
-            *data* is the C array (shape ``(nrows, ncols)``) that will be
-            passed to ``pcolormesh``.  Edge lengths are derived from
-            ``data.shape`` so they are always consistent.
-            """
-            xe = _resolve_attr(step, attr_x)
-            ye = _resolve_attr(step, attr_y)
-            if not _is_pixel_edges(xe) and not _is_pixel_edges(ye):
-                return (np.asarray(xe) * x_scale,
-                        np.asarray(ye) * y_scale)
-            ncols, nrows = data.shape[1], data.shape[0]
-            if extent_x is not None and extent_y is not None:
-                return (np.linspace(extent_x[0], extent_x[1], ncols + 1) * x_scale,
-                        np.linspace(extent_y[0], extent_y[1], nrows + 1) * y_scale)
-            # Last resort: pixel indices
-            return (np.arange(ncols + 1, dtype=float),
-                    np.arange(nrows + 1, dtype=float))
+        B1 image axes are fixed to *x_extent*/*y_extent* (mm).
+        A1 image axes use the global extent from A1 bin edges.
+        Each frame renders with per-step bin edges via ``pcolormesh``.
+        """
+        try:
+            if not observable:
+                print("No observables set.")
+                return
+            obs_name = (observable
+                        if observable is not None
+                        else self.observables[:1])
+        except Exception as err:
+            print(f"Observable not set: {err}")
+            return
 
-        n_frames  = len(images)
+        steps = self._steps_in_range()
+        xv, yv_list, ylabels = self.resolve_observable(obs_name)
 
-        n_trace   = len(yvals_list) if isinstance(yvals_list, list) else 1
+        images = [
+            step.image
+            if step.image is not None
+            else np.zeros((10, 10))
+            for step in steps
+            ]
+        images_slit = [
+            step.image_slit
+            if step.image_slit is not None
+            else np.zeros((10, 10))
+            for step in steps
+            ]
+
+        vmin_b1   = min(img.min() for img in images)
+        vmax_b1   = max(img.max() for img in images)
+        vmin_slit = (
+            min(img.min()
+                for img in images_slit)
+                if images_slit else 0
+                )
+        vmax_slit = (
+            max(img.max()
+                for img in images_slit)
+                if images_slit else 1
+                )
+
+        # --- B1 axes limits ------------------------------------------------
+        b1_xlim, b1_ylim = self._set_extents(
+            x_extent, y_extent, x_scale, y_scale, steps
+            )
+
+        # --- A1 axes limits (global extent from A1 edges) ------------------
+        a1_xlim, a1_ylim = self._set_axes_limits(steps, x_scale, y_scale)
+
+        n_frames = len(images)
+        n_trace  = len(yv_list) if isinstance(yv_list, list) else 1
         fig = plt.figure(figsize=(14 + 3 * n_trace, 10))
         gs = fig.add_gridspec(2, 1 + (n_trace+1) // 2, hspace=0.3, wspace=0.3)
         ax_img  = fig.add_subplot(gs[0, 0])
         ax_slit = fig.add_subplot(gs[1, 0])
-        _bg = plt.cm.viridis(0)
+        _bg = plt.colormaps["viridis"](0)
         ax_img.set_facecolor(_bg)
         ax_slit.set_facecolor(_bg)
 
         # --- Initial pcolormesh for B1 -------------------------------------
-        xe_b1, ye_b1 = _edges_for_frame(
+        xe_b1, ye_b1 = self._edges_for_frame(
             steps[0], 'analyzer.x_bin_edges', 'analyzer.y_bin_edges',
-            x_extent, y_extent, images[0].T)
+            x_extent, y_extent, images[0].T, x_scale, y_scale
+            )
         mesh_b1 = ax_img.pcolormesh(
             xe_b1, ye_b1, images[0].T, shading='auto',
             cmap='viridis', vmin=vmin_b1, vmax=vmax_b1)
@@ -1054,11 +1233,11 @@ class DataScan:
         mesh_a1 = None
         a1_has_data = any(s.image_slit is not None for s in steps)
         if a1_has_data:
-            xe_a1, ye_a1 = _edges_for_frame(
+            xe_a1, ye_a1 = self._edges_for_frame(
                 steps[0], 'x_bin_edges_slit', 'y_bin_edges_slit',
-                x_extent, y_extent, images_slit[0])
+                x_extent, y_extent, images_slit[0].T, x_scale, y_scale)
             mesh_a1 = ax_slit.pcolormesh(
-                xe_a1, ye_a1, images_slit[0], shading='auto',
+                xe_a1, ye_a1, images_slit[0].T, shading='auto',
                 cmap='viridis', vmin=vmin_slit, vmax=vmax_slit)
             plt.colorbar(mesh_a1, ax=ax_slit, label='Intensity')
             if a1_xlim is not None:
@@ -1078,39 +1257,42 @@ class DataScan:
             x_scale,
         )
         labels = [str(s.step_index) for s in steps]
-        trace_markers = []
+        trace_mark = []
 
         # --- Trace subplots ------------------------------------------------
-        if isinstance(yvals_list, list):
-            for i, (yvals_i, ax_tr) in enumerate(zip(yvals_list, range(n_trace))):
+        if isinstance(yv_list, list):
+            yvals = zip(yv_list, range(n_trace), strict=True)
+            for i, (yvals_i, ax_tr) in enumerate(yvals, start=0):
                 ax_tr = fig.add_subplot(gs[0 + (i % 2), 1 + int(i / 2)])
-                line, = ax_tr.plot(xvals * x_scale, yvals_i * y_scale,
+                line, = ax_tr.plot(xv * x_scale, yvals_i * y_scale,
                                    marker='o', color='steelblue',
                                    label=f'{ylabels[i]}')
                 for lb, label in enumerate(labels):
                     ax_tr.annotate(label,
-                                   (xvals[lb] * x_scale, yvals_i[lb] * y_scale),
+                                   (xv[lb] * x_scale,
+                                    yvals_i[lb] * y_scale),
                                    textcoords='offset points',
-                                   xytext=(5, 5), fontsize=8,
+                                   xytext=(5, 5),
+                                   fontsize=8,
                                    color=line.get_color())
                 mk, = ax_tr.plot([], [], 'ro', markersize=10, label='Current')
-                trace_markers.append(mk)
+                trace_mark.append(mk)
                 ax_tr.set_xlabel(var_label)
                 ax_tr.set_ylabel(_scale_label(f'{ylabels[i]}', y_scale))
                 ax_tr.legend()
                 ax_tr.grid(True)
         else:
             ax_tr = fig.add_subplot(gs[0, 1])
-            line, = ax_tr.plot(xvals * x_scale, yvals_list * y_scale,
+            line, = ax_tr.plot(xv * x_scale, yv_list * y_scale,
                                marker='o', color='steelblue',
                                label=obs_name)
             for lb, label in enumerate(labels):
                 ax_tr.annotate(label,
-                               (xvals[lb] * x_scale, yvals_list[lb] * y_scale),
+                               (xv[lb] * x_scale, yv_list[lb] * y_scale),
                                textcoords='offset points',
                                xytext=(5, 5), fontsize=8,
                                color=line.get_color())
-            trace_markers.append(
+            trace_mark.append(
                 ax_tr.plot([], [], 'ro', markersize=10, label='Current')[0]
             )
             ax_tr.set_xlabel(var_label)
@@ -1120,57 +1302,55 @@ class DataScan:
 
         # --- Update function (recreate meshes per frame) -------------------
         mesh_refs = [mesh_b1, mesh_a1]
-
-        def update(frame):
-            mesh_refs[0].remove()
-            xe_b, ye_b = _edges_for_frame(
-                steps[frame], 'analyzer.x_bin_edges', 'analyzer.y_bin_edges',
-                x_extent, y_extent, images[frame].T)
-            mesh_refs[0] = ax_img.pcolormesh(
-                xe_b, ye_b, images[frame].T, shading='auto',
-                cmap='viridis', vmin=vmin_b1, vmax=vmax_b1)
-            artists = [mesh_refs[0], step_title]
-
-            if mesh_refs[1] is not None and images_slit[frame] is not None:
-                mesh_refs[1].remove()
-                xe_a, ye_a = _edges_for_frame(
-                    steps[frame], 'x_bin_edges_slit', 'y_bin_edges_slit',
-                    x_extent, y_extent, images_slit[frame])
-                mesh_refs[1] = ax_slit.pcolormesh(
-                    xe_a, ye_a, images_slit[frame], shading='auto',
-                    cmap='viridis', vmin=vmin_slit, vmax=vmax_slit)
-                artists.append(mesh_refs[1])
-
-            step_title.set_text(f'Step {frame}')
-            for j, mk in enumerate(trace_markers):
-                if isinstance(yvals_list, list):
-                    mk.set_data([xvals[frame] * x_scale],
-                                [yvals_list[j][frame] * y_scale])
-                else:
-                    mk.set_data([xvals[frame] * x_scale],
-                                [yvals_list[frame] * y_scale])
-            artists.extend(trace_markers)
-            return artists
-
-        anim = FuncAnimation(fig, update, frames=n_frames,
+        img_update = partial(
+            self._animate_default_update,
+            steps=steps,
+            images=images,
+            images_slit=images_slit,
+            mesh_refs=mesh_refs,
+            ax_img=ax_img,
+            ax_slit=ax_slit,
+            step_title=step_title,
+            trace_mark=trace_mark,
+            xv=xv,
+            yv_list=yv_list,
+            x_scale=x_scale,
+            y_scale=y_scale,
+            x_extent=x_extent,
+            y_extent=y_extent,
+            vmin_b1=vmin_b1,
+            vmax_b1=vmax_b1,
+            vmin_slit=vmin_slit,
+            vmax_slit=vmax_slit
+            )
+        anim = FuncAnimation(fig, img_update, frames=n_frames,
                              interval=1000 // fps, blit=False)
         plt.tight_layout()
 
         if filename:
             if save_fmt == 'gif':
-                anim.save(f"{filename}.{save_fmt}", writer='pillow', fps=fps, dpi=300)
+                anim.save(f"{filename}.{save_fmt}",
+                          writer='pillow', fps=fps, dpi=300)
             elif save_fmt == 'mp4':
-                anim.save(f"{filename}.{save_fmt}", writer='ffmpeg', fps=fps, dpi=300)
+                anim.save(f"{filename}.{save_fmt}",
+                          writer='ffmpeg', fps=fps, dpi=300)
             plt.close()
         else:
             plt.close()
             ipydisplay(HTML(anim.to_jshtml()))
-
         return anim
 
-    def _animate_slit(self, observables, filename, fps, save_fmt,
-                      x_scale=1.0, y_scale=1.0,
-                      x_extent=(-0.74, 0.74), y_extent=(-0.5, 0.5)):
+    def _animate_slit(
+            self,
+            observables: list[str],
+            filename: str,
+            fps: int,
+            save_fmt: str,
+            x_scale: float = 1.0,
+            y_scale: float = 1.0,
+            x_extent: tuple[float, float] = (-0.74, 0.74),
+            y_extent: tuple[float, float] = (-0.5, 0.5)
+            ) -> FuncAnimation | None:
         """Dual-image animation for slit scans (DVF A1 + DVF B1).
 
         Uses step index as the x-axis on the trace plots (since slit scans
@@ -1181,12 +1361,12 @@ class DataScan:
         obs = observables if observables is not None else self.observables[:1]
         if not obs:
             print("No observables set.")
-            return
+            return None
 
         obs_name = obs[0]
         steps = self._steps_in_range()
         xv = np.array([s.step_index for s in steps])
-        _, yv_list = self.resolve_observable(obs_name)
+        _, yv_list, obs_name = self.resolve_observable(obs_name)
 
         images_a1 = [s.image_slit if s.image_slit is not None
                      else np.zeros((10, 10)) for s in steps]
@@ -1230,35 +1410,23 @@ class DataScan:
             a1_xlim = None
             a1_ylim = None
 
-        # --- Helper: resolve edges for one frame ---------------------------
-        def _edges_for_frame(step, attr_x, attr_y, extent_x, extent_y, data):
-            xe = _resolve_attr(step, attr_x)
-            ye = _resolve_attr(step, attr_y)
-            if not _is_pixel_edges(xe) and not _is_pixel_edges(ye):
-                return (np.asarray(xe) * x_scale,
-                        np.asarray(ye) * y_scale)
-            ncols, nrows = data.shape[1], data.shape[0]
-            if extent_x is not None and extent_y is not None:
-                return (np.linspace(extent_x[0], extent_x[1], ncols + 1) * x_scale,
-                        np.linspace(extent_y[0], extent_y[1], nrows + 1) * y_scale)
-            return (np.arange(ncols + 1, dtype=float),
-                    np.arange(nrows + 1, dtype=float))
-
         n_frames = len(images_a1)
+        x_scale = 1.0
+        y_scale = 1.0
 
         n_trace = len(yv_list) if isinstance(yv_list, list) else 1
         fig = plt.figure(figsize=(14, 4 + 3 * n_trace))
         gs = fig.add_gridspec(1 + n_trace, 2, hspace=0.3, wspace=0.3)
         ax_a1 = fig.add_subplot(gs[0, 0])
         ax_b1 = fig.add_subplot(gs[0, 1])
-        _bg = plt.cm.viridis(0)
+        _bg = plt.colormaps["viridis"](0)
         ax_a1.set_facecolor(_bg)
         ax_b1.set_facecolor(_bg)
 
         # --- Initial pcolormesh for A1 -------------------------------------
-        xe_a1, ye_a1 = _edges_for_frame(
+        xe_a1, ye_a1 = self._edges_for_frame(
             steps[0], 'x_bin_edges_slit', 'y_bin_edges_slit',
-            x_extent, y_extent, images_a1[0])
+            x_extent, y_extent, images_a1[0], x_scale, y_scale)
         mesh_a1 = ax_a1.pcolormesh(
             xe_a1, ye_a1, images_a1[0], shading='auto',
             cmap='viridis', vmin=vmin_a1, vmax=vmax_a1)
@@ -1272,9 +1440,9 @@ class DataScan:
         ax_a1.set_title('DVF A1')
 
         # --- Initial pcolormesh for B1 -------------------------------------
-        xe_b1, ye_b1 = _edges_for_frame(
+        xe_b1, ye_b1 = self._edges_for_frame(
             steps[0], 'analyzer.x_bin_edges', 'analyzer.y_bin_edges',
-            x_extent, y_extent, images_b1[0].T)
+            x_extent, y_extent, images_b1[0].T, x_scale, y_scale)
         mesh_b1 = ax_b1.pcolormesh(
             xe_b1, ye_b1, images_b1[0].T, shading='auto',
             cmap='viridis', vmin=vmin_b1, vmax=vmax_b1)
@@ -1293,16 +1461,24 @@ class DataScan:
         trace_markers = []
 
         if isinstance(yv_list, list):
-            for i, (yvi, idx) in enumerate(zip(yv_list, range(n_trace))):
+            yv = zip(yv_list, range(n_trace), strict=True)
+            for i, (yvi, idx) in enumerate(yv, start=0):
                 ax_tr = fig.add_subplot(gs[1 + idx, :])
-                line, = ax_tr.plot(xv, yvi, marker='o', color='steelblue',
+                line, = ax_tr.plot(xv, yvi,
+                                   marker='o',
+                                   color='steelblue',
                                    label=f'{obs_name} {i}')
                 for lb, label in enumerate(labels):
-                    ax_tr.annotate(label, (xv[lb], yvi[lb]),
+                    ax_tr.annotate(label,
+                                   (xv[lb], yvi[lb]),
                                    textcoords='offset points',
-                                   xytext=(5, 5), fontsize=8,
+                                   xytext=(5, 5),
+                                   fontsize=8,
                                    color=line.get_color())
-                mk, = ax_tr.plot([], [], 'ro', markersize=10, label='Current')
+                mk, = ax_tr.plot([], [],
+                                 'ro',
+                                 markersize=10,
+                                 label='Current')
                 trace_markers.append(mk)
                 ax_tr.set_xlabel('Step index')
                 ax_tr.set_ylabel(f'{obs_name} {i}')
@@ -1310,7 +1486,9 @@ class DataScan:
                 ax_tr.grid(True)
         else:
             ax_tr = fig.add_subplot(gs[1, :])
-            line, = ax_tr.plot(xv, yv_list, marker='o', color='steelblue',
+            line, = ax_tr.plot(xv, yv_list,
+                               marker='o',
+                               color='steelblue',
                                label=obs_name)
             for lb, label in enumerate(labels):
                 ax_tr.annotate(label, (xv[lb], yv_list[lb]),
@@ -1321,38 +1499,36 @@ class DataScan:
                 ax_tr.plot([], [], 'ro', markersize=10, label='Current')[0]
             )
             ax_tr.set_xlabel('Step index')
-            ax_tr.set_ylabel(obs_name)
+
+            obsn = obs_name[0] if isinstance(obs_name, list) else obs_name
+            ax_tr.set_ylabel(obsn)
             ax_tr.legend()
             ax_tr.grid(True)
 
         mesh_refs = [mesh_a1, mesh_b1]
 
-        def update(frame):
-            mesh_refs[0].remove()
-            xe_a, ye_a = _edges_for_frame(
-                steps[frame], 'x_bin_edges_slit', 'y_bin_edges_slit',
-                x_extent, y_extent, images_a1[frame])
-            mesh_refs[0] = ax_a1.pcolormesh(
-                xe_a, ye_a, images_a1[frame], shading='auto',
-                cmap='viridis', vmin=vmin_a1, vmax=vmax_a1)
-
-            mesh_refs[1].remove()
-            xe_b, ye_b = _edges_for_frame(
-                steps[frame], 'analyzer.x_bin_edges', 'analyzer.y_bin_edges',
-                x_extent, y_extent, images_b1[frame].T)
-            mesh_refs[1] = ax_b1.pcolormesh(
-                xe_b, ye_b, images_b1[frame].T, shading='auto',
-                cmap='viridis', vmin=vmin_b1, vmax=vmax_b1)
-
-            step_label.set_text(f'Step {frame}')
-            for j, mk in enumerate(trace_markers):
-                if isinstance(yv_list, list):
-                    mk.set_data([xv[frame]], [yv_list[j][frame]])
-                else:
-                    mk.set_data([xv[frame]], [yv_list[frame]])
-            return [mesh_refs[0], mesh_refs[1], step_label] + trace_markers
-
-        anim = FuncAnimation(fig, update, frames=n_frames,
+        img_update = partial(
+            self._animate_slit_update,
+            steps=steps,
+            images_a1=images_a1,
+            images_b1=images_b1,
+            mesh_refs=mesh_refs,
+            ax_a1=ax_a1,
+            ax_b1=ax_b1,
+            step_label=step_label,
+            trace_markers=trace_markers,
+            xv=xv,
+            yv_list=yv_list,
+            x_scale=x_scale,
+            y_scale=y_scale,
+            x_extent=x_extent,
+            y_extent=y_extent,
+            vmin_a1=vmin_a1,
+            vmax_a1=vmax_a1,
+            vmin_b1=vmin_b1,
+            vmax_b1=vmax_b1
+            )
+        anim = FuncAnimation(fig, img_update, frames=n_frames,
                              interval=1000 // fps, blit=False)
 
         if filename:
@@ -1367,9 +1543,56 @@ class DataScan:
 
         return anim
 
-    def __repr__(self):
+    def __repr__(self) -> str:
+        """Return a string representation of the DataScan object."""
         return (f"<DataScan #{self.scan_index}: {self.scan_type}, "
                 f"{len(self.steps)} steps>")
+
+    def _animate_slit_update(
+            self,
+            frame: int,
+            steps: list,
+            images_a1: list[np.ndarray],
+            images_b1: list[np.ndarray],
+            mesh_refs: list,
+            ax_a1: Axes,
+            ax_b1: Axes,
+            step_label: Text,
+            trace_markers: list,
+            xv: np.ndarray,
+            yv_list  : np.ndarray | list[np.ndarray],
+            x_scale  : float,
+            y_scale  : float,
+            x_extent : tuple[float, float],
+            y_extent : tuple[float, float],
+            vmin_a1  : float,
+            vmax_a1  : float,
+            vmin_b1  : float,
+            vmax_b1  : float
+            ) -> list:
+        mesh_refs[0].remove()
+        xe_a, ye_a = self._edges_for_frame(
+            steps[frame], 'x_bin_edges_slit', 'y_bin_edges_slit',
+            x_extent, y_extent, images_a1[frame], x_scale, y_scale)
+        mesh_refs[0] = ax_a1.pcolormesh(
+            xe_a, ye_a, images_a1[frame], shading='auto',
+            cmap='viridis', vmin=vmin_a1, vmax=vmax_a1)
+
+        mesh_refs[1].remove()
+        xe_b, ye_b = self._edges_for_frame(
+            steps[frame], 'analyzer.x_bin_edges', 'analyzer.y_bin_edges',
+            x_extent, y_extent, images_b1[frame].T, x_scale, y_scale)
+        mesh_refs[1] = ax_b1.pcolormesh(
+            xe_b, ye_b, images_b1[frame].T, shading='auto',
+            cmap='viridis', vmin=vmin_b1, vmax=vmax_b1)
+
+        step_label.set_text(f'Step {frame}')
+        for j, mk in enumerate(trace_markers):
+            if isinstance(yv_list, list):
+                mk.set_data([xv[frame]], [yv_list[j][frame]])
+            else:
+                mk.set_data([xv[frame]], [yv_list[frame]])
+        return [mesh_refs[0], mesh_refs[1], step_label] + trace_markers
 
 
 # ===========================================================================
@@ -1395,7 +1618,14 @@ class DataSet:
         ROI half-size for beam detection.
     """
 
-    def __init__(self, workdir, pattern, analysis_mode='projection', droi=4):
+    def __init__(
+            self,
+            workdir: str,
+            pattern: str,
+            analysis_mode: str = 'projection',
+            droi: int = 4
+            ) -> None:
+        """Load all matching HDF5 files and parse into DataScan objects."""
         self.scans         = []
         self.scan_type     = None
         self.scan_variable = None
@@ -1416,14 +1646,14 @@ class DataSet:
     # ------------------------------------------------------------------
 
     @staticmethod
-    def files_in_directory(wdir, pattern):
+    def files_in_directory(wdir: str, pattern: str) -> list[str]:
         """List files in *wdir* matching regex *pattern*."""
         raw = os.listdir(wdir)
         return sorted(os.path.join(wdir, f)
                       for f in raw if re.match(pattern, f))
 
     @staticmethod
-    def h5_to_dict(filename):
+    def h5_to_dict(filename: str) -> dict:
         """Read an HDF5 file into a nested dict.
 
         Structure::
@@ -1431,7 +1661,7 @@ class DataSet:
             data[group_name]['attrs']  -> group attributes
             data[group_name][dataset]  -> {'data': ndarray, 'attrs': ...}
         """
-        def _read_group(grp):
+        def _read_group(grp: h5py.Group) -> dict:
             out = {'attrs': dict(grp.attrs)}
             for name, item in grp.items():
                 if isinstance(item, h5py.Dataset):
@@ -1447,7 +1677,7 @@ class DataSet:
     #  Internal loading
     # ------------------------------------------------------------------
 
-    def _load(self, workdir, pattern):
+    def _load(self, workdir: str, pattern: str) -> None:
         """Load all matching HDF5 files and parse into DataScan objects."""
         files = self.files_in_directory(workdir, pattern)
         if not files:
@@ -1472,7 +1702,7 @@ class DataSet:
                     "DataSet requires all scans to be of the same type."
                 )
 
-    def _parse_scan(self, scan_dict, scan_index):
+    def _parse_scan(self, scan_dict: dict, scan_index: int) -> DataScan:
         """Convert a raw HDF5 dict into a DataScan with DataStep children."""
         step_keys = sorted(scan_dict.keys())
         if not step_keys:
@@ -1484,7 +1714,7 @@ class DataSet:
         scan_name = attrs.get('scan_name', 'mirror')
         if scan_name == _SCAN_TYPE_SLIT:
             scan_device   = attrs.get('scan_device', 'slit_A1')
-            scan_motor    = None
+            scan_motor    = ""
             scan_variable = f'{scan_device}.centre'
         else:
             scan_device   = attrs.get('scan_device', 'mirror')
@@ -1507,38 +1737,42 @@ class DataSet:
     #  Slicing helpers
     # ------------------------------------------------------------------
 
-    def _scans_in_range(self):
+    def _scans_in_range(self) -> list[DataScan]:
         return self.scans[self.scan_range]
 
     # ------------------------------------------------------------------
     #  Multi-scan plotting
     # ------------------------------------------------------------------
 
-    def plot_all(self, observables=None):
+    def plot_all(self, observables: list[str] | None = None) -> None:
         """Call ``plot_observables`` on each scan individually."""
         for scan in self._scans_in_range():
             scan.step_range = self.step_range
             scan.plot_observables(observables=observables)
 
-    def plot_superimposed(self, observable, first_item=0, last_item=None,
-                          x_scale=1.0, y_scale=1.0):
+    def plot_superimposed(
+            self,
+            observable: str,
+            first_item: int = 0,
+            last_item: int | None = None,
+            x_scale: float = 1.0,
+            y_scale: float = 1.0
+        ) -> tuple:
         """Overlay an observable trace from all scans on a single axes.
 
-        Parameters
-        ----------
-        observable : str
-        first_item : int
-            First step index.  Resets each scan's ``step_range``
-            to ``slice(first_item, last_item)``.
-        last_item : int or None
-        x_scale : float
-            Multiplicative factor for the x-axis (visual only).
-        y_scale : float
-            Multiplicative factor for the y-axis (visual only).
+        Args:
+            observable : str
+            first_item : int
+                First step index.  Resets each scan's ``step_range``
+                to ``slice(first_item, last_item)``.
+            last_item : int or None
+            x_scale : float
+                Multiplicative factor for the x-axis (visual only).
+            y_scale : float
+                Multiplicative factor for the y-axis (visual only).
 
-        Returns
-        -------
-        fig, ax
+        Returns:
+            fig, ax
         """
         fig, ax = plt.subplots(figsize=(10, 6))
         scans   = self._scans_in_range()
@@ -1588,17 +1822,14 @@ class DataSet:
     #  Statistics
     # ------------------------------------------------------------------
 
-    def statistics(self, observable):
+    def statistics(self, observable: str) -> dict:
         """Compute mean, median, and std of an observable across scans.
 
-        Parameters
-        ----------
-        observable : str
+        Args:
+            observable : str
 
-        Returns
-        -------
-        dict
-            Keys ``'xval'``, ``'mean'``, ``'median'``, ``'std_dev'``.
+        Returns:
+            dict, Keys 'xval', 'mean', 'median', 'std_dev'.
         """
         scans = self._scans_in_range()
         y_all = []
@@ -1606,7 +1837,7 @@ class DataSet:
 
         for scan in scans:
             scan.step_range = self.step_range
-            xv, yv = scan.resolve_observable(observable)
+            xv, yv, obs_name = scan.resolve_observable(observable)
             if xvals is None:
                 xvals = xv
             y_all.append(yv[0] if isinstance(yv, list) else yv)
@@ -1621,7 +1852,7 @@ class DataSet:
                 'std_dev': np.nanstd(y_all, axis=0),
             }
 
-    def correlation_matrix(self, observable):
+    def correlation_matrix(self, observable: str) -> np.ndarray:
         """Pairwise Pearson correlation of *observable* between scans.
 
         Returns
@@ -1635,7 +1866,7 @@ class DataSet:
         traces = []
         for scan in scans:
             scan.step_range = self.step_range
-            _, yv = scan.resolve_observable(observable)
+            _, yv, _ = scan.resolve_observable(observable)
             traces.append(yv[0] if isinstance(yv, list) else yv)
 
         for i in range(n):
@@ -1644,19 +1875,20 @@ class DataSet:
                 mat[i, j] = mat[j, i] = c
         return mat
 
-    def centroid_delta_plot(self, motor, step_start=0, step_end=-1):
+    def centroid_delta_plot(self,
+                            motor: str,
+                            step_start: int = 0,
+                            step_end: int = -1
+                            ) -> tuple:
         """Motor change vs centroid-X drift across scans.
 
-        Parameters
-        ----------
-        motor : str
-            Metadata key (e.g. ``'mirror.cs_rz'``).
-        step_start : int
-        step_end : int
+        Args:
+            motor      (str): Metadata key (e.g. ``'mirror.cs_rz'``).
+            step_start (int): Starting step index.
+            step_end   (int): Ending step index.
 
-        Returns
-        -------
-        fig, (axs,)
+        Returns:
+            fig, (axs,)
         """
         fig, axs = plt.subplots(2, 1, figsize=(10, 10))
         rax0 = axs[0].twinx()
@@ -1732,7 +1964,8 @@ class DataSet:
         plt.tight_layout()
         return fig, axs
 
-    def __repr__(self):
+    def __repr__(self) -> str:
+        """String representation of the DataSet."""
         return (f"<DataSet: {len(self.scans)} × {self.scan_type}, "
                 f"var={self.scan_variable}>")
 
@@ -1743,17 +1976,17 @@ class DataSet:
 #  These functions operate on raw nested dicts as before.  New code should
 #  use the DataStep / DataScan / DataSet classes defined above.
 
-def files_in_directory(wdir, pattern):
+def files_in_directory(wdir: str, pattern: str) -> list:
     """List files in a directory matching a regex pattern."""
     return DataSet.files_in_directory(wdir, pattern)
 
 
-def h5_to_dict(filename):
+def h5_to_dict(filename: str) -> dict:
     """Read an HDF5 file into a nested dict."""
     return DataSet.h5_to_dict(filename)
 
 
-def dataset_from_h5_files(files):
+def dataset_from_h5_files(files: list) -> dict:
     """Read multiple HDF5 files into a ``dataset`` nested dict."""
     dataset = {}
     for filename in files:
@@ -1763,7 +1996,7 @@ def dataset_from_h5_files(files):
     return dataset
 
 
-def _get_dev_val(dataset, nscan, dev):
+def _get_dev_val(dataset: dict, nscan: str, dev: str) -> float | None:
     """Helper to extract a device value from the dataset."""
     val = dataset[nscan]['attrs'].get(dev)
     if isinstance(val, (np.ndarray, list)):
@@ -1771,10 +2004,10 @@ def _get_dev_val(dataset, nscan, dev):
     return val
 
 
-def get_scan_data(dataset, variable, observable):
+def get_scan_data(dataset: dict, variable: str, observable: str) -> list:
     """Extract observable and variable values across all scans."""
     ndset = list(dataset.keys())
-    DataScan = []
+    data_scans = []
     for ns in ndset:
         scanlist = list(dataset[ns].keys())
         obs_set = []
@@ -1784,13 +2017,14 @@ def get_scan_data(dataset, variable, observable):
             obs_set.append(obsval)
             varval = _get_dev_val(dataset[ns], nscan, variable)
             var_set.append(varval)
-        DataScan.append((obs_set, var_set))
-    return DataScan
+        data_scans.append((obs_set, var_set))
+    return data_scans
 
 
-def _get_variable_metadata(data, dev_motor):
+def _get_variable_metadata(data: dict, dev_motor: str) -> (list | None):
     """Extract variable metadata from a single step dict."""
     device, motor = dev_motor.split('.')
+    meta = None
     try:
         if data['attrs'].get(dev_motor) is not None:
             meta = data['attrs'].get(dev_motor)
@@ -1803,25 +2037,44 @@ def _get_variable_metadata(data, dev_motor):
     return meta
 
 
-def observable_statistics(dataset, observable):
-    """Calculate statistics of an observable across scans."""
+def observable_statistics(dataset: dict, observable: str) -> dict:
+    """Calculate statistics of an observable across scans.
+
+    Args:
+        dataset   (dict) : Nested dict of scans.
+        observable (str) : Name of the observable to analyze.
+
+    Returns:
+        dict: Contains 'xval', 'mean', 'median', and 'std_dev'
+    """
+    # Avoid lint complaints about unused variables.
+    xvals = []
+    if not dataset:
+        raise ValueError("Dataset is empty.")
+
+    # Loop over scans to extract observable values.
     yscans = []
-    for DataScan in dataset.values():
-        _, _, xvals, yvals, _ = observable_data(DataScan, observable)
+    for data_scan in dataset.values():
+        _, _, xvals, yvals, _ = observable_data(data_scan, observable)
         yscans.append(yvals)
     yscans = np.array(yscans)
     return {
-        'xval':    xvals,
-        'mean':    np.mean(yscans, axis=0),
-        'median':  np.median(yscans, axis=0),
-        'std_dev': np.std(yscans, axis=0),
+        'xval'    : xvals,
+        'mean'    : np.mean(yscans, axis=0),
+        'median'  : np.median(yscans, axis=0),
+        'std_dev' : np.std(yscans, axis=0),
     }
 
 
-def observable_data(DataScan, observable, droi=4):
+def observable_data(
+        data_scan: dict,
+        observable: str,
+        droi: int = 4
+        ) -> tuple:
     """Extract observable behaviour across steps in a single scan."""
-    first = list(DataScan.values())[0]
+    first = list(data_scan.values())[0]
     attrs = first['attrs']
+    motor = ""
     if attrs.get('scan_name') == 'slit':
         device = attrs['scan_device']
         dev_motor = f"{device}"
@@ -1831,13 +2084,13 @@ def observable_data(DataScan, observable, droi=4):
         dev_motor = f"{device}.{motor}"
 
     if observable == 'centroid':
-        steps, xvals, cents, sigmas = beam_centroid(DataScan, dev_motor, droi)
+        steps, xvals, cents, sigmas = beam_centroid(data_scan, dev_motor, droi)
         centroids = [cents[:, 0], cents[:, 1]]
         sigmas = [sigmas[:, 0], sigmas[:, 1]]
         return motor, steps, xvals, centroids, sigmas
 
     if observable == 'fwhm':
-        fwhms = beam_fwhm(DataScan, dev_motor, droi)
+        fwhms = beam_fwhm(data_scan, dev_motor, droi)
         steps = np.array(list(fwhms.keys()))
         xvals = np.array([fwhms[step][0] for step in steps])
         cvalues = np.array([fwhms[step][1] for step in steps])
@@ -1845,7 +2098,7 @@ def observable_data(DataScan, observable, droi=4):
         return motor, steps, xvals, fwhms_out, None
 
     if observable == 'intensity':
-        intensities = beam_intensity(DataScan, dev_motor, droi)
+        intensities = beam_intensity(data_scan, dev_motor, droi)
         steps = np.array(list(intensities.keys()))
         xvals = np.array([intensities[step][0] for step in steps])
         cvalues = np.array([intensities[step][1] for step in steps])
@@ -1853,36 +2106,64 @@ def observable_data(DataScan, observable, droi=4):
         sigmas = [np.sqrt(i) for i in ints]
         return motor, steps, xvals, ints, sigmas
 
-    steps, xval, yval = [], [], []
-    for step, DataStep in DataScan.items():
+    steps, xvals, yval = [], [], []
+    for step, data_step in data_scan.items():
         steps.append(int(step.split('-')[-1]))
-        xmeta = _get_variable_metadata(DataStep, dev_motor)
-        ymeta = DataStep['attrs'].get(f"{device}.{observable}")
-        xval.append(float(xmeta[0]) if isinstance(xmeta, (list, np.ndarray)) else float(xmeta))
-        yval.append(float(ymeta[0]) if isinstance(ymeta, (list, np.ndarray)) else float(ymeta))
+        xmeta = _get_variable_metadata(data_step, dev_motor)
+        if xmeta is not None:
+            xvals.append(
+                float(xmeta[0])
+                if isinstance(xmeta, (list, np.ndarray))
+                else float(xmeta)
+                )
+        ymeta = data_step['attrs'].get(f"{device}.{observable}")
+        yval.append(
+            float(ymeta[0])
+            if isinstance(ymeta, (list, np.ndarray))
+            else float(ymeta)
+            )
+    return motor, np.array(steps), np.array(xvals), [np.array(yval)], None
 
-    return motor, np.array(steps), np.array(xval), [np.array(yval)], None
 
-
-def beam_from_scan(DataScan, dev_motor, droi=4, analysis_mode='projection'):
+def beam_from_scan(
+        data_scan: dict,
+        dev_motor: str,
+        droi: int = 4,
+        analysis_mode: str = 'projection'
+        ) -> dict:
     """Return beam instances from a scan dict."""
     beam_instances = {}
-    for step, data in DataScan.items():
+    for step, data in data_scan.items():
         st = int(step.split('-')[-1])
-        xval = float(_get_variable_metadata(data, dev_motor)[0])
+        xval = _get_variable_metadata(data, dev_motor)
         img = data['dvf_B1']['data']
-        x_bin_edges = np.array(data['dvf_B1']['attrs'].get(['x_bin_centers'], None))
-        y_bin_edges = np.array(data['dvf_B1']['attrs'].get(['y_bin_centers'], None))
+        x_bin_edges = np.array(
+            data['dvf_B1']['attrs'].get('x_bin_centers', None)
+            )
+        y_bin_edges = np.array(
+            data['dvf_B1']['attrs'].get('y_bin_centers', None)
+            )
 
-        ana = Histogram2DAnalyzer(img, x_bin_edges=x_bin_edges, y_bin_edges=y_bin_edges, droi=droi)
+        ana = Histogram2DAnalyzer(
+            img,
+            x_bin_edges=x_bin_edges,
+            y_bin_edges=y_bin_edges,
+            droi=droi
+            )
         if not ana.beam_visible:
             continue
         ana.analyze(analysis_mode)
-        beam_instances[st] = [xval, ana]
+        if xval is not None:
+            beam_instances[st] = [float(xval[0]), ana]
     return beam_instances
 
 
-def beam_centroid(datascan, dev_motor, droi=4, analysis_mode='projection'):
+def beam_centroid(
+        datascan: dict,
+        dev_motor: str,
+        droi=4,
+        analysis_mode='projection'
+        ) -> tuple:
     """Return centroids from a scan dict."""
     beam_instances = beam_from_scan(datascan, dev_motor, droi, analysis_mode)
     steps, xvals, centrs, sigmas = [], [], [], []
@@ -1896,7 +2177,12 @@ def beam_centroid(datascan, dev_motor, droi=4, analysis_mode='projection'):
     return np.array(steps), np.array(xvals), np.array(centrs), np.array(sigmas)
 
 
-def beam_fwhm(datascan, dev_motor, droi=4, analysis_mode='project'):
+def beam_fwhm(
+        datascan: dict,
+        dev_motor: str,
+        droi=4,
+        analysis_mode='projection'
+        ) -> dict:
     """Return FWHMs from a scan dict."""
     fwhms = {}
     beam_instances = beam_from_scan(datascan, dev_motor, droi, analysis_mode)
@@ -1909,7 +2195,12 @@ def beam_fwhm(datascan, dev_motor, droi=4, analysis_mode='project'):
     return fwhms
 
 
-def beam_intensity(datascan, dev_motor, droi=4, analysis_mode='project'):
+def beam_intensity(
+        datascan: dict,
+        dev_motor: str,
+        droi=4,
+        analysis_mode='projection'
+        ) -> dict:
     """Return intensities from a scan dict."""
     beam_instances = beam_from_scan(datascan, dev_motor, droi, analysis_mode)
     intensities = {}
@@ -1936,7 +2227,7 @@ def beam_intensity(datascan, dev_motor, droi=4, analysis_mode='project'):
     return intensities
 
 
-def correlate(a, b):
+def correlate(a: np.ndarray, b: np.ndarray) -> np.ndarray:
     """Normalised cross-correlation between two 1-D arrays."""
     a = a - np.mean(a)
     b = b - np.mean(b)
@@ -1948,12 +2239,24 @@ def correlate(a, b):
 #  Old-style plotting functions  (preserved for backward compatibility)
 # ===========================================================================
 
-def dataset_plot(ax, xvals, yvals, datakey, observable, motor,
-                 first_item=0, last_item=None, annotate_points=True):
+def dataset_plot(
+        ax              : Axes,
+        xvals           : np.ndarray,
+        yvals           : np.ndarray,
+        datakey         : str,
+        observable      : str,
+        motor           : str,
+        first_item      : int = 0,
+        last_item       : int = 0,
+        annotate_points : bool = True
+        ) -> None:
     """Plot observable vs. step for a single dataset on *ax*."""
     if annotate_points:
-        for i, (tx, yv) in enumerate(zip(
-                xvals[first_item:last_item], yvals[first_item:last_item])):
+        xyvals = zip(
+            xvals[first_item:last_item],
+            yvals[first_item:last_item],
+            strict=True)
+        for i, (tx, yv) in enumerate(xyvals, start=first_item):
             ax.annotate(str(i), (tx, yv), textcoords='offset points',
                         xytext=(5, 5), fontsize=8)
     if last_item is None:
@@ -1970,8 +2273,16 @@ def dataset_plot(ax, xvals, yvals, datakey, observable, motor,
     ax.grid(True)
 
 
-def plot_double_observable(axs, nrow, dataset, observable, observables,
-                           first_item=0, last_item=None, droi=4):
+def plot_double_observable(
+        axs         : np.ndarray,
+        nrow        : int,
+        dataset     : dict,
+        observable  : str,
+        observables : list,
+        first_item  : int = 0,
+        last_item   : int = 0,
+        droi        : int = 4
+        ) -> None:
     """Plot two-component observables in separate subplots."""
     for key, data in dataset.items():
         motor, steps, xvals, yvals, sigmas = observable_data(data, observable,
@@ -1983,7 +2294,13 @@ def plot_double_observable(axs, nrow, dataset, observable, observables,
     observables.remove(observable)
 
 
-def scan_plot(data, observables, first_item=0, last_item=None, droi=8):
+def scan_plot(
+        data        : dict,
+        observables : list,
+        first_item  : int = 0,
+        last_item   : int = 0,
+        droi        : int = 8
+        ) -> None:
     """Plot observables across passes (old-style dict interface)."""
     nobs = len(observables)
     nobs += sum(1 for obs in ['centroid', 'fwhm', 'intensity']
@@ -1993,7 +2310,7 @@ def scan_plot(data, observables, first_item=0, last_item=None, droi=8):
     fig, axs = plt.subplots(nrows=nrows, ncols=ncols,
                             figsize=(10 * ncols, 6 * nrows))
     if nrows == 1 and ncols == 1:
-        axs = [axs]
+        axs = np.array([axs])
 
     nextrow = 0
     for observable in ['centroid', 'fwhm', 'intensity']:
@@ -2010,14 +2327,22 @@ def scan_plot(data, observables, first_item=0, last_item=None, droi=8):
             ax = axs[idx + nextrow]
         for key, dataset_item in data.items():
             motor, steps, xvals, yvals, sigmas = observable_data(
-                dataset_item, observable, droi=droi)
+                dataset_item, observable, droi=droi
+                )
             for yval in yvals:
-                dataset_plot(ax, xvals, yval, key, observable, motor,
-                             first_item, last_item)
+                dataset_plot(
+                    ax, xvals, yval, key, observable, motor,
+                    first_item, last_item
+                    )
     plt.show()
 
 
-def centroid_plot(data, steppass, wdir='.', save_fmt='gif'):
+def centroid_plot(
+        data        : dict,
+        steppass    : int,
+        wdir        : str = '.',
+        save_fmt    : str = 'gif'
+        ) -> None:
     """Plot beam images and centroids (old-style dict interface)."""
     motor, steps, xval, (cx_all, cy_all), _ = observable_data(data, 'centroid')
     images = [(f'step-{step:04d}',
@@ -2044,7 +2369,7 @@ def centroid_plot(data, steppass, wdir='.', save_fmt='gif'):
     ax_cy.legend()
     ax_cy.grid(True)
 
-    def update(frame):
+    def update(frame: int) -> tuple:
         name, img = images[frame]
         im.set_data(img)
         im.set_clim(img.min(), img.max())
@@ -2066,7 +2391,12 @@ def centroid_plot(data, steppass, wdir='.', save_fmt='gif'):
     ipydisplay(HTML(anim.to_jshtml()))
 
 
-def fwhm_plot(dataset, steppass, wdir='.', save_fmt='gif'):
+def fwhm_plot(
+        dataset     : dict,
+        steppass    : int,
+        wdir        : str = '.',
+        save_fmt    : str = 'gif'
+        ) -> None:
     """Plot beam images and FWHMs (old-style dict interface)."""
     motor, step_nums, xval, (fx_all, fy_all) = observable_data(dataset, 'fwhm')
     images = [(f'step-{step:04d}',
@@ -2093,7 +2423,7 @@ def fwhm_plot(dataset, steppass, wdir='.', save_fmt='gif'):
     ax_fy.legend()
     ax_fy.grid(True)
 
-    def update(frame):
+    def update(frame: int) -> tuple:
         name, img = images[frame]
         im.set_data(img)
         im.set_clim(img.min(), img.max())
@@ -2115,7 +2445,12 @@ def fwhm_plot(dataset, steppass, wdir='.', save_fmt='gif'):
     ipydisplay(HTML(anim.to_jshtml()))
 
 
-def centroid_x_delta_plot(dataset, motor, step_start=0, step_end=-1):
+def centroid_x_delta_plot(
+        dataset     : dict,
+        motor       : str,
+        step_start  : int = 0,
+        step_end    : int = -1
+        ) -> None:
     """Motor change and centroid-X change across passes."""
     fig, axs = plt.subplots(2, 1, figsize=(10, 10))
     rax0 = axs[0].twinx()
@@ -2165,7 +2500,10 @@ def centroid_x_delta_plot(dataset, motor, step_start=0, step_end=-1):
     plt.show()
 
 
-def caustic_analysis(filename, filedir):
+def caustic_analysis(
+        filename    : str,
+        filedir     : str
+        ) -> tuple[tuple, tuple]:
     """Perform caustic analysis on a single HDF5 file."""
     filepath = os.path.join(filedir, filename)
     f = h5py.File(name=filepath, mode='r')
@@ -2187,4 +2525,4 @@ def caustic_analysis(filename, filedir):
     resultsx = utils.caustic_processing(causticx_params, positions)
     resultsy = utils.caustic_processing(causticy_params, positions)
     f.close()
-    return resultsx, resultsy
+    return (resultsx, resultsy)
