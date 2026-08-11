@@ -29,8 +29,8 @@ All functionality lives inside Histogram2DAnalyzer:
                            mode in ('quick', 'moments', 'fit', 'all').
 """
 
-import numpy as np
 import matplotlib.pyplot as plt
+import numpy as np
 from matplotlib.patches import Ellipse
 from scipy.optimize import curve_fit
 from scipy.signal import savgol_filter
@@ -557,8 +557,8 @@ class Histogram2DAnalyzer:
             useroi: if True, fit only within a 3-sigma ellipse ROI.
 
         Returns:
-            covmat: 2x2 covariance matrix.
             (mux, muy): means.
+            covmat: 2x2 covariance matrix.
         """
         xg, yg = np.meshgrid(self.x_bin_centers, self.y_bin_centers,
                              indexing="ij")
@@ -586,6 +586,7 @@ class Histogram2DAnalyzer:
         vary  = (weight * dy * dy).sum() / wsum
         covxy = (weight * dx * dy).sum() / wsum
         covmat = np.array([[varx, covxy], [covxy, vary]])
+        print(covmat)
         return (mux, muy), covmat
 
     def _ellipse_params_from_cov(self, cov):
@@ -690,7 +691,6 @@ class Histogram2DAnalyzer:
             warnings.warn("Beam not visible; skipping momenta analysis.",
                           stacklevel=2)
             return None
-        
         img = self.img if img is None else np.asarray(img, dtype=float)
         if img.ndim != 2:
             raise ValueError("img must be a 2D array.")
@@ -699,8 +699,7 @@ class Histogram2DAnalyzer:
             raise ValueError("x_bin_edges length must be img.shape[0] + 1.")
         if self.y_bin_edges.size != ny + 1:
             raise ValueError("y_bin_edges length must be img.shape[1] + 1.")
-
-        (mux, muy), covmat = self._covariance_from_moments(img, useroi=useroi)
+        (mux, muy), covmat = self._covariance_from_moments(weight=img, useroi=useroi)
         sigx = np.sqrt(covmat[0, 0])
         sigy = np.sqrt(covmat[1, 1])
         sig_major, sig_minor, theta, evecs = self._ellipse_params_from_cov(
