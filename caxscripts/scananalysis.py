@@ -25,10 +25,13 @@ Usage::
     tx_01.scan_animation(filename="tx_pass01.gif")
 """
 
+# Fix for new annotation standards in older Python versions.
+from __future__ import annotations
+
 from functools import partial
 import os
 import re
-from typing import Any
+from typing import Any, cast
 import warnings
 
 import h5py
@@ -700,10 +703,7 @@ class DataScan:
 
         if self.scan_type == _SCAN_TYPE_SLIT:
             raise NotImplementedError()
-
-        return self._plot_default(
-            observables, x_scale=x_scale, y_scale=y_scale
-            )
+        return self._plot_default(observables, x_scale, y_scale)
 
     def _plot_default(
             self,
@@ -712,14 +712,12 @@ class DataScan:
             y_scale=1.0
             ) -> tuple:
         """Standard line-plot layout for mirror / general scans."""
-        observable_names = observables if observables is not None \
-                           else self.observables
-        if not observable_names:
+        if observables is None:
             print("No observables set. Set scan.observables or pass them.")
             return None, None
 
         all_observables = []
-        for obs in observable_names:
+        for obs in observables:
             all_observables.extend(_COMPONENT_MAP.get(obs, [obs]))
 
         steps = self._steps_in_range()
@@ -731,8 +729,7 @@ class DataScan:
         ncols = 2 if n_plots > 1 else 1
         fig, axs = plt.subplots(nrows=nrows, ncols=ncols,
                                 figsize=(10 * ncols, 6 * nrows))
-        if n_plots == 1:
-            axs = np.array([axs])
+        axs = np.array(axs) if n_plots == 1 else np.array([axs])
         # Flattening the axes simplifies indexing logic
         ax_flat = axs.flatten()
 
@@ -1890,7 +1887,8 @@ class DataSet:
         Returns:
             fig, (axs,)
         """
-        fig, axs = plt.subplots(2, 1, figsize=(10, 10))
+        fig, axs_raw = plt.subplots(nrows=2, ncols=1, figsize=(10, 10))
+        axs  = cast(np.ndarray, axs_raw)   # Avoids lint useless complaints.
         rax0 = axs[0].twinx()
         rax1 = axs[1].twinx()
         plt.subplots_adjust(hspace=0.3)
@@ -2315,16 +2313,18 @@ def scan_plot(
     nextrow = 0
     for observable in ['centroid', 'fwhm', 'intensity']:
         if observable in observables:
-            plot_double_observable(axs, nextrow, data, observable,
-                                   observables, first_item, last_item, droi)
+            plot_double_observable(
+                axs,  # type: ignore
+                nextrow, data, observable,
+                observables, first_item, last_item, droi)
             nextrow += 1
 
     for idx, observable in enumerate(observables):
         if nrows > 1 and ncols > 1:
             nr, nc = divmod(idx + nextrow * ncols, 2)
-            ax = axs[nr, nc]
+            ax = axs[nr, nc]  # type: ignore
         else:
-            ax = axs[idx + nextrow]
+            ax = axs[idx + nextrow]  # type: ignore
         for key, dataset_item in data.items():
             motor, steps, xvals, yvals, sigmas = observable_data(
                 dataset_item, observable, droi=droi
@@ -2348,7 +2348,9 @@ def centroid_plot(
     images = [(f'step-{step:04d}',
                data[f'step-{step:04d}']['dvf_B1']['data'])
               for step in steps]
-    fig, (ax_img, ax_cx, ax_cy) = plt.subplots(1, 3, figsize=(24, 5))
+    fig, (ax_img, ax_cx, ax_cy) = plt.subplots(
+        1, 3, figsize=(24, 5)
+        )  # type: ignore
     im = ax_img.imshow(images[0][1], cmap='viridis', animated=True)
     plt.colorbar(im, ax=ax_img, label='Intensity')
     ax_img.set_xlabel('Pixel X')
@@ -2402,7 +2404,9 @@ def fwhm_plot(
     images = [(f'step-{step:04d}',
                dataset[f'step-{step:04d}']['dvf_B1']['data'])
               for step in step_nums]
-    fig, (ax_img, ax_fx, ax_fy) = plt.subplots(1, 3, figsize=(24, 5))
+    fig, (ax_img, ax_fx, ax_fy) = plt.subplots(
+        1, 3, figsize=(24, 5)
+        )  # type: ignore
     im = ax_img.imshow(images[0][1], cmap='viridis', animated=True)
     plt.colorbar(im, ax=ax_img, label='Intensity')
     ax_img.set_xlabel('Pixel X')
@@ -2452,7 +2456,8 @@ def centroid_x_delta_plot(
         step_end    : int = -1
         ) -> None:
     """Motor change and centroid-X change across passes."""
-    fig, axs = plt.subplots(2, 1, figsize=(10, 10))
+    fig, axs_raw = plt.subplots(2, 1, figsize=(10, 10))
+    axs = cast(np.ndarray, axs_raw)   # Avoids lint useless complaints.
     rax0 = axs[0].twinx()
     rax1 = axs[1].twinx()
     plt.subplots_adjust(hspace=0.3)
