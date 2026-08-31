@@ -586,7 +586,6 @@ class Histogram2DAnalyzer:
         vary  = (weight * dy * dy).sum() / wsum
         covxy = (weight * dx * dy).sum() / wsum
         covmat = np.array([[varx, covxy], [covxy, vary]])
-        print(covmat)
         return (mux, muy), covmat
 
     def _ellipse_params_from_cov(self, cov):
