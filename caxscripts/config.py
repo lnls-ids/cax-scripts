@@ -74,17 +74,17 @@ class Config:
 
     # Water flux.
     PVFLUX = [
-        CAX_PREFIX + cax.mirror.PVS.FM_01_MON,
-        CAX_PREFIX + cax.mirror.PVS.FM_02_MON,
+        CAX_PREFIX + cax.mirror.PVS.FLOWMETER1_MON,
+        CAX_PREFIX + cax.mirror.PVS.FLOWMETER2_MON,
     ]
 
     # Temperature.
     PVTEMP = [
-        CAX_PREFIX + cax.mirror.PVS.TP_00_MON,
-        CAX_PREFIX + cax.mirror.PVS.TP_01_MON,
-        CAX_PREFIX + cax.mirror.PVS.TP_02_MON,
-        CAX_PREFIX + cax.mirror.PVS.TP_03_MON,
-        CAX_PREFIX + cax.mirror.PVS.TP_04_MON,
+        CAX_PREFIX + cax.mirror.PVS.TEMP0_MON,
+        CAX_PREFIX + cax.mirror.PVS.TEMP1_MON,
+        CAX_PREFIX + cax.mirror.PVS.TEMP2_MON,
+        CAX_PREFIX + cax.mirror.PVS.TEMP3_MON,
+        CAX_PREFIX + cax.mirror.PVS.TEMP4_MON,
     ]
 
     # Pressure.

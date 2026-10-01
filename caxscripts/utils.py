@@ -267,7 +267,7 @@ def snapshot_machine_state(cax: CAXCtrl):
         'dvf_A1'     : dvf_a1_status,
         'dvf_B1'     : dvf_b1_status,
         'sr'         : _get_pvs_status(Cfg.SRPV), 
-        'ids'        : _get_pvs_status(Cfg.IDPVS), 
+        # 'ids'        : _get_pvs_status(Cfg.IDPVS), 
         'caxenv'     : _get_pvs_status(Cfg.CAX_ENV_PVS), 
     }
 
