@@ -1775,10 +1775,11 @@ class DataSet:
         scans   = self._scans_in_range()
 
         for scan in scans:
-            sr = self.step_range
-            if first_item != 0 or last_item is not None:
-                sr = slice(first_item, last_item)
-            scan.step_range = sr
+            scan.step_range = (
+                slice(first_item, last_item)
+                if first_item != 0 or last_item is not None
+                else self.step_range
+                )
             xvals, yvals, yl = scan.resolve_observable(observable)
             step_labels = [str(s.step_index) for s in scan._steps_in_range()]
             label = f'Scan #{scan.scan_index}'
