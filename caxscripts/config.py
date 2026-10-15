@@ -1,6 +1,16 @@
 """Parameters and constants for Carcara scripts."""
 
 from siriuspy.devices import CAXCtrl
+import warnings
+
+# Warnings filter to ignore deprecation.
+# Python version is waiting for upgrade in siriuspy.
+# Use a regex match to target this exact deprecation warning
+warnings.filterwarnings(
+    "ignore",
+    category=UserWarning,
+    message=".*pkg_resources is deprecated as an API.*"
+    )
 
 
 class Config:
@@ -103,6 +113,11 @@ class Config:
         CAX_PREFIX + cax.mirror.PVS.PR_V2_MON,
     ]
 
+    PVFWHM = [
+        "CAX:B:BASLER01:ImgROIXFWHM-Mon",
+        "CAX:B:BASLER01:ImgROIYFWHM-Mon",
+    ]
+
     # CAX environment PVs dictionary (temperature, water flux etc.).
     CAX_ENV_PVS = {
         "Mirror 1 input flow"        : PVFLUX[0],
@@ -122,4 +137,6 @@ class Config:
         "Q4 pressure"                : PVPRESS[7],
         "V1 pressure"                : PVPRESS[8],
         "V2 pressure"                : PVPRESS[9],
+        "FWHM X"                     : PVFWHM[0],
+        "FWHM Y"                     : PVFWHM[1],
         }
