@@ -338,7 +338,7 @@ def _flatten_dict(dct, prefix=''):
     return flat
 
 
-def save_step(h5file, step, step_index=None):
+def save_step(h5file, step, step_index=None, snapshot=0):
     """Persist one scan-step dict (from snapshot_machine_state) to HDF5.
 
     HDF5 layout produced for each step::
@@ -367,8 +367,8 @@ def save_step(h5file, step, step_index=None):
     if not h5file:
         return
 
-    idx = step_index if step_index is not None else step.get('step', 0)
-    grpname = f'scan-{idx:04d}'
+    idx     = step_index if step_index is not None else step.get('step', 0)
+    grpname = f'scan-{idx:04d}-s{snapshot:02d}'
 
     # --- Separate DVF dicts (contain images) from everything else ---
     non_dvf = {k: v for k, v in step.items() if k not in Cfg.DVF_KEYS}

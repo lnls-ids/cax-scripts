@@ -384,7 +384,11 @@ class CAXCausticMove():
         """."""
         return self.cax.dvf_B1.z_mon
 
-    def _step_update_and_save(self, h5file, step_index, step_type):
+    def _step_update_and_save(self,
+                              h5file,
+                              step_index,
+                              step_type,
+                              snapshot=0):
         """Update the step dict with current machine state and save to HDF5 file."""
         step = {
             'step'        : step_index,
@@ -395,7 +399,7 @@ class CAXCausticMove():
             'time'        : datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             }
         step.update(utils.snapshot_machine_state(self.cax))
-        utils.save_step(h5file, step)
+        utils.save_step(h5file, step, snapshot=snapshot)
         self.results.append(step)
 
         return step
@@ -427,12 +431,16 @@ class CAXCausticMove():
             print(f"Step: {idx+1}/{len(positions)} -"
                   f" Moving detector to z = {pos:.3f}")
             self.set_detector_pos(pos)
-            time.sleep(scanargs.get('dtime', 0))
 
             try:
-                self._step_update_and_save(h5file, idx+1,
-                                           step_type='scanning')
-                print(f" Ended step {idx+1} -- snapshot saved. \n")
+                for isnap in range(scanargs['nsnapshots']):
+                    time.sleep(scanargs.get('dtime', 0))
+                    self._step_update_and_save(
+                        h5file,
+                        idx+1,
+                        step_type='scanning',
+                        snapshot=isnap)
+                    print(f" Ended step {idx+1} -- snapshot {isnap} saved. \n")
             except Exception as err:
                 print(f" Could not save step {idx+1}: \n {err}\n")
                 continue

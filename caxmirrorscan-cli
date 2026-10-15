@@ -162,8 +162,11 @@ def _general_parameters_ask(motortype, limits):
     scanargs['nsteps'] = int(_ask_val(
         "Enter number of steps for scanning: ", limits=(1, float('inf'))
         ))
+    scanargs['nsnapshots']  = int(_ask_val(
+        "Enter number of snapshots per step: ", limits=(1, float('inf'))
+        ))
     scanargs['dtime']  = _ask_val(
-        "Enter dwell time at each position (s): ", limits=(0, float('inf'))
+        "Enter dwell time for each snapshot (s): ", limits=(0, float('inf'))
         )
     return scanargs
 
