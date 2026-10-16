@@ -20,6 +20,7 @@ from siriuspy.devices.device import _PVAccessor
 # Detector range.
 ZPOSMIN = 135.14
 ZPOSMAX = 560
+IMG_THRESHOLD = 100
 
 
 class CAXMirrorMove:
@@ -78,14 +79,14 @@ class CAXMirrorMove:
         return count + 1
 
     def _step_update_and_save(self, h5file, step_index, motor, step_type):
-        """Update the step dict with current machine state and save to HDF5 file."""
+        """Update the step dict with machine state and save to HDF5 file."""
         step = {
-            'step'       : step_index,
-            'scan_name'  : 'mirror',
-            'scan_device'  : 'mirror',
-            'scan_motor' : motor,
-            'state'      : step_type,
-            'time'       : datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            'step'        : step_index,
+            'scan_name'   : 'mirror',
+            'scan_device' : 'mirror',
+            'scan_motor'  : motor,
+            'state'       : step_type,
+            'time'        : datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         }
         step.update(utils.snapshot_machine_state(self.cax))
         self.results.append(step)
@@ -358,7 +359,6 @@ class CAXSlitMove:
         print(f'\nElapsed time [min]: {elapsed:.2f}')
 
 
-
 # ----- caustic ------- #
 
 class CAXCausticMove():
@@ -377,7 +377,8 @@ class CAXCausticMove():
 
     def set_detector_pos(self, pos):
         """."""
-        self.cax.dvf_B1.z = pos # this now uses _PVAccessor's robust moving methods
+        # this now uses _PVAccessor's robust moving methods
+        self.cax.dvf_B1.z = pos
         # !: waiting time after setting
 
     def get_detector_pos(self):
@@ -388,14 +389,17 @@ class CAXCausticMove():
                               h5file,
                               step_index,
                               step_type,
-                              snapshot=0):
-        """Update the step dict with current machine state and save to HDF5 file."""
+                              dwelltime=1,
+                              snapshot=0
+                              ):
+        """Update step dict with current machine state and save to HDF5."""
         step = {
             'step'        : step_index,
             'scan_name'   : 'caustic',
             'scan_device' : 'dvf_B1',
             'scan_motor'  : 'z_pos',
             'state'       : step_type,
+            'dwell_time'  : dwelltime,
             'time'        : datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             }
         step.update(utils.snapshot_machine_state(self.cax))
@@ -439,7 +443,9 @@ class CAXCausticMove():
                         h5file,
                         idx+1,
                         step_type='scanning',
-                        snapshot=isnap)
+                        dwelltime=scanargs.get('dtime', 1),
+                        snapshot=isnap
+                        )
                     print(f" Ended step {idx+1} -- snapshot {isnap} saved. \n")
             except Exception as err:
                 print(f" Could not save step {idx+1}: \n {err}\n")
@@ -448,8 +454,11 @@ class CAXCausticMove():
         # Return to initial position after scan.
         self.set_detector_pos(step0['dvf_B1']['z_pos'][0])
         try:
-            self._step_update_and_save(h5file, idx+2,
-                                       step_type='final')
+            self._step_update_and_save(
+                h5file,
+                idx+2,
+                step_type='final'
+                )
             print(" Ended final step -- snapshot saved. \n")
         except Exception as err:
             print(f" Could not save final step: \n {err}\n")
@@ -476,11 +485,12 @@ class CAXLensMove(_PVAccessor):
 
     def set_lens_pos(self, pos):
         """."""
-        self.cax.dvf_B1.lens = pos  # this now uses _PVAccessor's robust moving methods
+        # this now uses _PVAccessor's robust moving methods
+        self.cax.dvf_B1.lens = pos
         # !: waiting time after setting
 
     def _step_update_and_save(self, h5file, step_index, step_type):
-        """Update the step dict with current machine state and save to HDF5 file."""
+        """Update step dict with current machine state and save to HDF5."""
         step = {
             'step'        : step_index,
             'scan_name'   : 'lens',
@@ -489,14 +499,14 @@ class CAXLensMove(_PVAccessor):
             'state'       : step_type,
             'time'        : datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             }
-        step.update(utils.snapshot_machine_state(self.cax))        
+        step.update(utils.snapshot_machine_state(self.cax))
         utils.save_step(h5file, step)
         self.results.append(step)
 
         return step
 
     def device_scan(self, scanargs, h5file=None):
-        """Scan lens position and return collected data.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        """Scan lens position and return collected data.
 
         Args:
             scanargs: dict with 'start', 'stop', 'nsteps', 'dtime'.
@@ -512,8 +522,11 @@ class CAXLensMove(_PVAccessor):
         t0 = time.time()
 
         # Record initial machine state before any movement.
-        step0 = self._step_update_and_save(h5file, 0, 
-                                           step_type='initial')
+        step0 = self._step_update_and_save(
+            h5file,
+            0,
+            step_type='initial'
+            )
 
         for idx, pos in enumerate(positions):
             print(f"Step {idx+1}/{len(positions)} -"
@@ -528,7 +541,7 @@ class CAXLensMove(_PVAccessor):
             except Exception as err:
                 print(f" Could not save step {idx+1}: \n {err}\n")
                 continue
-        
+
         # Return to initial position after scan.
         self.set_lens_pos(step0['dvf_B1']['lens_pos'][0])
         try:
@@ -540,8 +553,3 @@ class CAXLensMove(_PVAccessor):
 
         elapsed = (time.time() - t0) / 60
         print(f'\nElapsed time [min]: {elapsed:.2f}')
-
-
-IMG_THRESHOLD = 100
-
-

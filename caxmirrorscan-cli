@@ -165,9 +165,9 @@ def _general_parameters_ask(motortype, limits):
     scanargs['nsnapshots']  = int(_ask_val(
         "Enter number of snapshots per step: ", limits=(1, float('inf'))
         ))
-    scanargs['dtime']  = _ask_val(
+    scanargs['dtime']  = float(_ask_val(
         "Enter dwell time for each snapshot (s): ", limits=(0, float('inf'))
-        )
+        ))
     return scanargs
 
 
@@ -299,13 +299,13 @@ def show_results(results, scantype: str):
 def main():
     """Main function to run the CLI."""
     # Current status.
-    print("\n\n#####\n##### Carcará Scanning System\n#####\n")
+    print("#####\n##### Carcará Scanning System\n#####\n")
 
     # Initialize control.
     cax = CAXCtrl()
 
     # Show status of devices.
-    print("\n\n\n##### Current Status of Selected Devices #####\n\n")
+    print("\n##### Current Status of Selected Devices\n")
     cax_status = status_show(cax)
 
     # Select scan type.
