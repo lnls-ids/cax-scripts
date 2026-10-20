@@ -3,8 +3,11 @@
 """CLI to control CAX mirror motors for scanning its mirror."""
 
 from datetime import datetime
+import os
+import re
 import matplotlib.pyplot as plt
 import numpy as np
+import argparse
 
 from caxscripts import utils
 from caxscripts.h5file import HDF5File
@@ -88,13 +91,16 @@ def scan_menu_select():
     return scantype, filename
 
 
-def device_picker(choice, cax):
+def device_picker(
+        choice: str,
+        cax: "CAXCtrl"
+        ):
     """Return the device instance for the chosen scan type."""
     class_name = SCAN_TYPES[choice][3]
     return getattr(mtv, class_name)(cax)
 
 
-def status_show(cax):
+def status_show(cax: "CAXCtrl") -> dict:
     """Show current status of the device."""
     # Get current status of all devices.
     cax_status = utils.snapshot_machine_state(cax)
@@ -102,8 +108,8 @@ def status_show(cax):
     # Run through all devices and print their status.
     for key, val in cax_status.items():
         print(f" -- {key.replace('_', ' ').upper()}:\n")
-        try:
-            for pv, vs in val.items():
+        for pv, vs in val.items():
+            try:
                 if isinstance(vs, (int, float)):
                     if vs < 1e-3:
                         print(f"    * {pv:30} : {vs:1.4e}")
@@ -125,32 +131,40 @@ def status_show(cax):
                 # print(f"  * {pv:12} : ", end="")
                 # enbl = True if vs[1] == 1 else False
                 # print(f"{vs[0]:12.6f}, enabled = {enbl}")
-            print("\n")
-        except Exception as err:
-            print(f" WARNING (status show) : {err} ({pv})")
-            # for bl, v in val.items():
-            #     print(f"  * {bl:15} : {v}")
+            except Exception as err:
+                print(f" WARNING (status show) : {err} ({key}/{pv})")
+                # for bl, v in val.items():
+                #     print(f"  * {bl:15} : {v}")
+        print("\n")
     print("\n#####\n")
 
     return cax_status
 
 
-def _ask_val(prompt, limits):
+def _ask_val(prompt: str,
+             limits: tuple[float, float]
+             ) -> float:
     while True:
+        raw = input(prompt).strip()
+        if raw.lower() == 'q':
+            print("Exiting... Done.")
+            exit(0)
         try:
-            value = float(input(prompt))
-            if not (limits[0] <= value <= limits[1]):
-                print(f"Value must be within limits: {limits}\n")
-                continue
-            return value
-        except ValueError:
-            if value == 'q':
-                print("Exiting... Done.")
-                exit(0)
+            value = float(raw)
+        except ValueError as err:
+            print(f" WARNING (_ask_val) :\n {err}")
             print("Invalid input. Please enter a numeric value.\n")
+            continue
+        if not (limits[0] <= value <= limits[1]):
+            print(f"Value must be within limits: {limits}\n")
+            continue
+        return value
 
 
-def _general_parameters_ask(motortype, limits):
+def _general_parameters_ask(
+        motortype: str,
+        limits: tuple[float, float]
+        ) -> dict:
     """Ask a question with multiple options and return the selected option."""
     scanargs = dict()
     scanargs['start']  = _ask_val(
@@ -296,10 +310,85 @@ def show_results(results, scantype: str):
     plt.show()
 
 
-def main():
+def read_parameter_file(filename: str) -> dict:
+    """Read scan parameters from file."""
+    if not os.path.isfile(filename):
+        print(f" ERROR (read_parameter_file) : File not found: {filename}")
+        exit(1)
+
+    scanargs = {
+        'scantype'   : '',
+        'outputfile' : '',
+        'start'      : 1.0,
+        'stop'       : 1.0,
+        'nsteps'     : 10,
+        'nsnapshots' : 1,
+        'dtime'      : 1.0,
+        }
+
+    with open(filename, 'r') as fn:
+        for line in fn:
+            # Skip empty lines and comments.
+            if not line.strip() or re.match(r'^\s*#', line):
+                continue
+
+            key, val = line.strip().split()
+
+            if key not in scanargs.keys():
+                print(" WARNING (read_parameter_file):"
+                    f" Unknown parameter {key}.\n Stopping.")
+                exit(1)
+
+            if key == 'outputfile':
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                scanargs[key] = f"{val}-{timestamp}.hdf5"
+
+            elif key == 'scantype':
+                if val not in SCAN_TYPES.keys():
+                    print(" ERROR (read_parameter_file):"
+                            f" Unknown scan type: {val}\n Stopping.")
+                    exit(1)
+                scanargs[key] = val
+
+            elif key in ['nsteps', 'nsnapshots']:
+                scanargs[key] = int(val)
+
+            elif key in ['start', 'stop', 'nsteps', 'dtime']:
+                scanargs[key] = float(val)
+
+            else:
+                scanargs[key] = val
+
+    # To be implemented: define the limits for the scan parameters.
+    limits = (-np.inf, np.inf)
+    if not (limits[0] <= scanargs['start'] <= limits[1]):
+        print(f"Value must be within limits: {limits}\n")
+        exit(1)
+
+    if not (limits[0] <= scanargs['stop'] <= limits[1]):
+        print(f"Value must be within limits: {limits}\n")
+        exit(1)
+
+    return scanargs
+
+
+def cmd_line() -> "argparse.Namespace":
+    """Parse command-line arguments."""
+    parser = argparse.ArgumentParser(description="Carcará Mirror Scan CLI")
+    parser.add_argument(
+        "--outputfile", type=str, required=False,
+        help="HDF5 file to save scan results."
+    )
+    return parser.parse_args()
+
+
+def main() -> None:
     """Main function to run the CLI."""
     # Current status.
     print("#####\n##### Carcará Scanning System\n#####\n")
+
+    # Read command-line arguments.
+    args = cmd_line()
 
     # Initialize control.
     cax = CAXCtrl()
@@ -309,7 +398,14 @@ def main():
     cax_status = status_show(cax)
 
     # Select scan type.
-    scantypes, filename = scan_menu_select()
+    fileargs = None
+    if args.outputfile is None:
+        scantypes, filename = scan_menu_select()
+    else:
+        # Read scan parameters from the provided parameter file.
+        fileargs  = read_parameter_file(args.outputfile)
+        scantypes = [fileargs['scantype']]
+        filename  = fileargs['outputfile']
 
     # Open HDF5 file for per-step saving.
     h5file = HDF5File(filename, filedir='.')
@@ -324,7 +420,9 @@ def main():
         if st == 'slit_A1' or st == 'slit_B1':
             dev, scanargs = slit_parameters_ask(choice, cax_status, cax)
         else:
-            scanargs  = parameters_ask(choice, cax_status)
+            # Use the parameter file if given; otherwise ask interactively.
+            scanargs  = (parameters_ask(choice, cax_status)
+                        if fileargs is None else fileargs)
             print(
                 f"\n### Starting {SCAN_TYPES[choice]} scan with parameters:\n"
                 f" start    : {scanargs['start']:15.4f} mm,\n"
@@ -336,13 +434,9 @@ def main():
             # Instantiate the device for the chosen scan type.
             dev = device_picker(choice, cax)
 
-        if dev is None:
-            print(f" ERROR: No device found for scan type '{choice}'.")
-            continue
         # Mirror scans need the motor attribute name.
         scanargs['motor'] = SCAN_TYPES[choice][1]
 
-        # sys.exit(0)
         # Run the scan for the device with the specified parameters.
         # Results can be accessed by dev.results after the scan.
         dev.device_scan(scanargs, h5file=h5file)
