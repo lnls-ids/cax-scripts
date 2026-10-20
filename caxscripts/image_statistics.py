@@ -660,8 +660,8 @@ class Histogram2DAnalyzer:
         freq_f = freq[k:]
         p_b = freq_b / freq_b.sum() if freq_b.sum() > 0 else np.array([])
         p_f = freq_f / freq_f.sum() if freq_f.sum() > 0 else np.array([])
-        h_b = -np.sum(p_b * np.log2(p_b + 1e-10))
-        h_f = -np.sum(p_f * np.log2(p_f + 1e-10))
+        h_b = -float(np.sum(p_b * np.log2(p_b + 1e-10)))
+        h_f = -float(np.sum(p_f * np.log2(p_f + 1e-10)))
         return h_b + h_f
 
     # ------------------------------------------------------------------
