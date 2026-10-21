@@ -452,7 +452,11 @@ class CAXCausticMove():
                 continue
 
         # Return to initial position after scan.
-        self.set_detector_pos(step0['dvf_B1']['z_pos'][0])
+        curr_pos = self.get_detector_pos()
+        while np.abs(curr_pos - step0['dvf_B1']['z_pos'][0]) > 1e-3:
+            self.set_detector_pos(step0['dvf_B1']['z_pos'][0])
+            curr_pos = self.get_detector_pos()
+
         try:
             self._step_update_and_save(
                 h5file,
@@ -465,6 +469,8 @@ class CAXCausticMove():
 
         elapsed = (time.time() - t0) / 60
         print(f'\nElapsed time [min]: {elapsed:.2f}')
+
+
 
 
 # ------- lens -------- #
