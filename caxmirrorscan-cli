@@ -47,7 +47,7 @@ SCAN_TYPES = {
 WSIZE_V, WSIZE_H = 467, 178
 
 
-def scan_menu_select():
+def scan_menu_select() -> tuple[list[str], str]:
     """Select scan type from a menu."""
     print("\nSelect scan (type a list of numbers separated by spaces):\n")
     for key, value in SCAN_TYPES.items():
@@ -141,9 +141,10 @@ def status_show(cax: "CAXCtrl") -> dict:
     return cax_status
 
 
-def _ask_val(prompt: str,
-             limits: tuple[float, float]
-             ) -> float:
+def _ask_val(
+        prompt: str,
+        limits: tuple[float, float]
+        ) -> float:
     while True:
         raw = input(prompt).strip()
         if raw.lower() == 'q':
@@ -155,7 +156,7 @@ def _ask_val(prompt: str,
             print(f" WARNING (_ask_val) :\n {err}")
             print("Invalid input. Please enter a numeric value.\n")
             continue
-        if not (limits[0] <= value <= limits[1]):
+        if not _within_limits(value, limits):
             print(f"Value must be within limits: {limits}\n")
             continue
         return value
@@ -187,19 +188,19 @@ def _general_parameters_ask(
 
 # The methods below convert pixel intervals observed by the DVF
 # into actual motor positions.
-def _top_pos_from_pixels(pixel):
+def _top_pos_from_pixels(pixel: float) -> float:
     return -pixel * 0.01039 + 19.1
 
 
-def _bottom_pos_from_pixels(pixel):
+def _bottom_pos_from_pixels(pixel: float) -> float:
     return (pixel - WSIZE_V) * 0.01041 + 37.4
 
 
-def _left_pos_from_pixels(pixel):
+def _left_pos_from_pixels(pixel: float) -> float:
     return -pixel * 0.007126 + 44.3
 
 
-def _right_pos_from_pixels(pixel):
+def _right_pos_from_pixels(pixel: float) -> float:
     return (pixel - WSIZE_H) * 0.007126 + 46.4
 
 
@@ -279,6 +280,34 @@ def slit_parameters_ask(scantype: str, cax_status: dict, cax: CAXCtrl):
     return device_mv, scanargs
 
 
+def _within_limits(value: float, limits: tuple[float, float]) -> bool:
+    return limits[0] <= value <= limits[1]
+
+
+def _motor_limits(scantype: str, cax_status: dict) -> tuple[float, float]:
+    """Motor limits for a scan type, read from the machine status."""
+    motortype   = SCAN_TYPES[scantype][1]
+    device      = SCAN_TYPES[scantype][2]
+    motorstatus = cax_status[device].get(motortype)
+    if motorstatus is None:
+        # Slit scans have no single motor; see note below.
+        return (-np.inf, np.inf)
+    return (min(motorstatus[1], motorstatus[2]),
+            max(motorstatus[1], motorstatus[2]))
+
+
+def _parameter_limits(scantype: str, cax_status: dict) -> dict:
+    """Per-parameter limits shared by interactive and file parsing."""
+    motor_limits = _motor_limits(scantype, cax_status)
+    return {
+        'start'      : motor_limits,
+        'stop'       : motor_limits,
+        'nsteps'     : (1, float('inf')),
+        'nsnapshots' : (1, float('inf')),
+        'dtime'      : (0, float('inf')),
+        }
+
+
 def parameters_ask(scantype: str, cax_status: dict):
     """Get scan parameters from user."""
     motortype   = SCAN_TYPES[scantype][1]
@@ -291,8 +320,7 @@ def parameters_ask(scantype: str, cax_status: dict):
     print(f" ** Current {motortype} value: {currval:10.4f}")
 
     # Guarantees the order of limits for later comparison.
-    limits = (min(motorstatus[1], motorstatus[2]),
-              max(motorstatus[1], motorstatus[2]))
+    limits = _motor_limits(scantype, cax_status)
     print(f" ** Parameter limits:   [{limits[0]:10.4f}, {limits[1]:10.4f}]")
     return _general_parameters_ask(motortype, limits)
 
@@ -310,7 +338,33 @@ def show_results(results, scantype: str):
     plt.show()
 
 
-def read_parameter_file(filename: str) -> dict:
+def _parse_scantype(val: str) -> str:
+    if val not in SCAN_TYPES:
+        print(f" ERROR (read_parameter_file): Unknown scan type: {val}\n Stopping.")
+        exit(1)
+    return val
+
+
+def _parse_outputfile(val: str) -> str:
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    return f"{val}-{timestamp}.hdf5"
+
+
+_PARAM_PARSERS = {
+    'scantype'   : _parse_scantype,
+    'outputfile' : _parse_outputfile,
+    'start'      : float,
+    'stop'       : float,
+    'nsteps'     : int,
+    'nsnapshots' : int,
+    'dtime'      : float,
+}
+
+
+def read_parameter_file(
+        filename   : str,
+        cax_status : dict,
+        ) -> dict:
     """Read scan parameters from file."""
     if not os.path.isfile(filename):
         print(f" ERROR (read_parameter_file) : File not found: {filename}")
@@ -339,35 +393,15 @@ def read_parameter_file(filename: str) -> dict:
                     f" Unknown parameter {key}.\n Stopping.")
                 exit(1)
 
-            if key == 'outputfile':
-                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                scanargs[key] = f"{val}-{timestamp}.hdf5"
-
-            elif key == 'scantype':
-                if val not in SCAN_TYPES.keys():
-                    print(" ERROR (read_parameter_file):"
-                            f" Unknown scan type: {val}\n Stopping.")
-                    exit(1)
-                scanargs[key] = val
-
-            elif key in ['nsteps', 'nsnapshots']:
-                scanargs[key] = int(val)
-
-            elif key in ['start', 'stop', 'nsteps', 'dtime']:
-                scanargs[key] = float(val)
-
-            else:
-                scanargs[key] = val
+            scanargs[key] = _PARAM_PARSERS[key](val)
 
     # To be implemented: define the limits for the scan parameters.
-    limits = (-np.inf, np.inf)
-    if not (limits[0] <= scanargs['start'] <= limits[1]):
-        print(f"Value must be within limits: {limits}\n")
-        exit(1)
-
-    if not (limits[0] <= scanargs['stop'] <= limits[1]):
-        print(f"Value must be within limits: {limits}\n")
-        exit(1)
+    limits = _parameter_limits(scanargs['scantype'], cax_status)
+    for key in ('start', 'stop', 'nsteps', 'nsnapshots', 'dtime'):
+        if not _within_limits(scanargs[key], limits[key]):
+            print(f" ERROR (read_parameter_file): {key} = {scanargs[key]}"
+                  f" outside limits {limits[key]}\n Stopping.")
+            exit(1)
 
     return scanargs
 
@@ -403,7 +437,7 @@ def main() -> None:
         scantypes, filename = scan_menu_select()
     else:
         # Read scan parameters from the provided parameter file.
-        fileargs  = read_parameter_file(args.outputfile)
+        fileargs  = read_parameter_file(args.outputfile, cax_status)
         scantypes = [fileargs['scantype']]
         filename  = fileargs['outputfile']
 
