@@ -345,9 +345,10 @@ def _parse_scantype(val: str) -> str:
     return val
 
 
-def _parse_outputfile(val: str) -> str:
+def _parse_outputfile(prefix: str) -> str:
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    return f"{val}-{timestamp}.hdf5"
+    filename = f"{prefix}-{timestamp}.hdf5"
+    return filename
 
 
 _PARAM_PARSERS = {
@@ -410,8 +411,8 @@ def cmd_line() -> "argparse.Namespace":
     """Parse command-line arguments."""
     parser = argparse.ArgumentParser(description="Carcará Mirror Scan CLI")
     parser.add_argument(
-        "--outputfile", type=str, required=False,
-        help="HDF5 file to save scan results."
+        "--paramfile", "-p", type=str, required=False,
+        help="Text file containing scan parameters."
     )
     return parser.parse_args()
 
@@ -433,11 +434,11 @@ def main() -> None:
 
     # Select scan type.
     fileargs = None
-    if args.outputfile is None:
+    if args.paramfile is None:
         scantypes, filename = scan_menu_select()
     else:
         # Read scan parameters from the provided parameter file.
-        fileargs  = read_parameter_file(args.outputfile, cax_status)
+        fileargs  = read_parameter_file(args.paramfile, cax_status)
         scantypes = [fileargs['scantype']]
         filename  = fileargs['outputfile']
 
