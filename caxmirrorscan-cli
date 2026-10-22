@@ -414,6 +414,10 @@ def cmd_line() -> "argparse.Namespace":
         "--paramfile", "-p", type=str, required=False,
         help="Text file containing scan parameters."
     )
+    parser.add_argument(
+        "--return-to-initial", action="store_true",
+        help="Return device to initial position after scan."
+    )
     return parser.parse_args()
 
 
@@ -474,7 +478,11 @@ def main() -> None:
 
         # Run the scan for the device with the specified parameters.
         # Results can be accessed by dev.results after the scan.
-        dev.device_scan(scanargs, h5file=h5file)
+        dev.device_scan(
+            scanargs,
+            h5file=h5file,
+            do_return_to_initial=args.return_to_initial
+            )
 
     print(f"\nData saved to {filename}.")
 

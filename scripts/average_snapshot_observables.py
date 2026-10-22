@@ -187,8 +187,9 @@ def observable_set_calc(
         print(f"* Processing file: {cfile}")
         steps, nsnaps = block_snapshots(cdatum)
         print(f"  Total steps found: {len(steps)}.\n")
+        cdat_scan1 = list(cdatum.keys())[1]
         try:
-            ry = cdatum["scan-0001-s00"].attrs["mirror.ry"][0]
+            ry = cdatum[cdat_scan1].attrs["mirror.ry"][0]
         except KeyError:
             ry = cdatum["scan-0001"].attrs["mirror.ry"][0]
 
@@ -196,7 +197,7 @@ def observable_set_calc(
         observables[ry] = (
             calculate_observables(steps, OBSERVABLE_KEYS)
             )
-    dwell_time = cdatum["scan-0001-s00"].attrs["dwell_time"]
+    dwell_time = cdatum[cdat_scan1].attrs["dwell_time"]
 
     return observables, nsnaps, dwell_time
 
@@ -427,20 +428,16 @@ def plot_observables(
     print("Coefficients for z0 fit, y:",
           f"a = { coeffs_y[0]}, b = {coeffs_y[1]}")
     axes[0, 2].plot(
-        rys, z0_x, 'ro-', label=f'z0_x (ry = {ry:.4f})',
-        color=colormap[ii]
+        rys, z0_x, 'o-', label=f'z0_x (ry = {ry:.4f})',
         )
     axes[0, 2].plot(
-        rys, z0_x_fit, 'b--', label='z0_x fit',
-        color=colormap[ii]
+        rys, z0_x_fit, 'o-', label='z0_x fit',
         )
     axes[0, 2].plot(
-        rys, z0_y, 'ro-', label=f'z0_y (ry = {ry:.4f})',
-        color=colormap[ii]
+        rys, z0_y, 'o-', label=f'z0_y (ry = {ry:.4f})',
         )
     axes[0, 2].plot(
-        rys, z0_y_fit, 'b--', label='z0_y fit',
-        color=colormap[ii]
+        rys, z0_y_fit, '^-', label='z0_y fit',
         )
 
     ounit = r'[$\mu$m]'
@@ -526,13 +523,9 @@ def cmd_line() -> argparse.Namespace:
 
     args = parser.parse_args()
 
-    print("\n\n#### 1 Parsed arguments: r= ", args.r, " f= ", args.f)
-
     if not args.f and not args.r:
         args.f = True
         args.r = True
-
-    print("\n\n#### 2 Parsed arguments: r= ", args.r, " f= ", args.f)
 
     return args
 

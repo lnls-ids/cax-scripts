@@ -408,7 +408,7 @@ class CAXCausticMove():
 
         return step
 
-    def device_scan(self, scanargs, h5file=None):
+    def device_scan(self, scanargs, h5file=None, do_return_to_initial=False):
         """Scan detector z position (caustic) and return collected data.
 
         Args:
@@ -436,6 +436,7 @@ class CAXCausticMove():
                   f" Moving detector to z = {pos:.3f}")
             self.set_detector_pos(pos)
 
+            print()
             try:
                 for isnap in range(scanargs['nsnapshots']):
                     time.sleep(scanargs.get('dtime', 0))
@@ -444,14 +445,31 @@ class CAXCausticMove():
                         idx+1,
                         step_type='scanning',
                         dwelltime=scanargs.get('dtime', 1),
-                        snapshot=isnap
+                        snapshot=isnap+1
                         )
-                    print(f" Ended step {idx+1} -- snapshot {isnap} saved. \n")
+                    print(f"\r Step {idx+1}: snapshot {isnap+1} saved.",
+                          end='', flush=True)
             except Exception as err:
                 print(f" Could not save step {idx+1}: \n {err}\n")
                 continue
+            print()
 
         # Return to initial position after scan.
+        if do_return_to_initial:
+            self._return_to_initial_position(step0, h5file, idx)
+
+        print(f"\n* Ended scanning step {idx+1}:"
+              f" {scanargs['nsnapshots']} snapshots saved.")
+
+        elapsed = (time.time() - t0) / 60
+        print(f'\nElapsed time [min]: {elapsed:.2f}')
+
+
+    def _return_to_initial_position(self,
+                                    step0: dict,
+                                    h5file,
+                                    idx: int):
+        """Return detector to its initial position recorded in step0."""
         curr_pos = self.get_detector_pos()
         while np.abs(curr_pos - step0['dvf_B1']['z_pos'][0]) > 1e-3:
             self.set_detector_pos(step0['dvf_B1']['z_pos'][0])
@@ -463,13 +481,8 @@ class CAXCausticMove():
                 idx+2,
                 step_type='final'
                 )
-            print(" Ended final step -- snapshot saved. \n")
         except Exception as err:
             print(f" Could not save final step: \n {err}\n")
-
-        elapsed = (time.time() - t0) / 60
-        print(f'\nElapsed time [min]: {elapsed:.2f}')
-
 
 
 
