@@ -28,26 +28,27 @@ Usage::
 # Fix for new annotation standards in older Python versions.
 from __future__ import annotations
 
-from functools import partial
 import os
 import re
-from typing import Any, cast
 import warnings
+from functools import partial
+from typing import Any, cast
 
 import h5py
-from matplotlib.text import Text
-from matplotlib.axes import Axes
-# from matplotlib import colormaps
-from matplotlib.animation import FuncAnimation
 import matplotlib.pyplot as plt
+import numpy as np
 from IPython.display import HTML
 from IPython.display import display as ipydisplay
 
-import numpy as np
+# from matplotlib import colormaps
+from matplotlib.animation import FuncAnimation
+from matplotlib.axes import Axes
+from matplotlib.text import Text
 from scipy.optimize import curve_fit
 
-from . import utils
 from caxscripts.image_statistics import Histogram2DAnalyzer
+
+# from . import utils
 
 # Threshold for peak-to-average ratio acceptance of image.
 THRESHOLD = 100
@@ -516,18 +517,8 @@ class DataScan:
                 )
 
             a1_attrs = step_data.get('dvf_A1', {}).get('attrs', {})
-            x_edges_raw = a1_attrs.get('x_bin_edges')
-            y_edges_raw = a1_attrs.get('y_bin_edges')
-
-            if x_edges_raw is not None and y_edges_raw is not None:
-                x_bin_edges_a1 = np.asarray(x_edges_raw)
-                y_bin_edges_a1 = np.asarray(y_edges_raw)
-            elif image_a1 is not None:
-                x_bin_edges_a1 = np.arange(image_a1.shape[0] + 1)
-                y_bin_edges_a1 = np.arange(image_a1.shape[1] + 1)
-            else:
-                x_bin_edges_a1 = None
-                y_bin_edges_a1 = None
+            x_bin_edges_a1 = a1_attrs.get('x_bin_edges', None)
+            y_bin_edges_a1 = a1_attrs.get('y_bin_edges', None)
 
             step = DataStep(
                 step_index=step_idx,
@@ -2506,29 +2497,29 @@ def centroid_x_delta_plot(
     plt.show()
 
 
-def caustic_analysis(
-        filename    : str,
-        filedir     : str
-        ) -> tuple[tuple, tuple]:
-    """Perform caustic analysis on a single HDF5 file."""
-    filepath = os.path.join(filedir, filename)
-    f = h5py.File(name=filepath, mode='r')
-    positions = [f[scaname]['dvf_B1'].attrs['z_pos'] for scaname in f]
-    caustic3d = []
-    for scaname in f:
-        img = np.array(f[scaname]['dvf_B1'])
-        caustic3d.append(img)
-    causticx = np.sum(caustic3d, axis=1).T
-    causticy = np.sum(caustic3d, axis=2).T
-    fwhmsx = [utils.full_width(data=profilex, coords=positions)[0]
-              for profilex in causticx.T]
-    fwhmsy = [utils.full_width(data=profiley, coords=positions)[0]
-              for profiley in causticy.T]
-    causticx_params, _ = curve_fit(utils.caustic_func, positions, fwhmsx,
-                                   p0=None)
-    causticy_params, _ = curve_fit(utils.caustic_func, positions, fwhmsy,
-                                   p0=None)
-    resultsx = utils.caustic_processing(causticx_params, positions)
-    resultsy = utils.caustic_processing(causticy_params, positions)
-    f.close()
-    return (resultsx, resultsy)
+# def caustic_analysis(
+#         filename    : str,
+#         filedir     : str
+#         ) -> tuple[tuple, tuple]:
+#     """Perform caustic analysis on a single HDF5 file."""
+#     filepath = os.path.join(filedir, filename)
+#     f = h5py.File(name=filepath, mode='r')
+#     positions = [f[scaname]['dvf_B1'].attrs['z_pos'] for scaname in f]
+#     caustic3d = []
+#     for scaname in f:
+#         img = np.array(f[scaname]['dvf_B1'])
+#         caustic3d.append(img)
+#     causticx = np.sum(caustic3d, axis=1).T
+#     causticy = np.sum(caustic3d, axis=2).T
+#     fwhmsx = [utils.full_width(data=profilex, coords=positions)[0]
+#               for profilex in causticx.T]
+#     fwhmsy = [utils.full_width(data=profiley, coords=positions)[0]
+#               for profiley in causticy.T]
+#     causticx_params, _ = curve_fit(utils.caustic_func, positions, fwhmsx,
+#                                    p0=None)
+#     causticy_params, _ = curve_fit(utils.caustic_func, positions, fwhmsy,
+#                                    p0=None)
+#     resultsx = utils.caustic_processing(causticx_params, positions)
+#     resultsy = utils.caustic_processing(causticy_params, positions)
+#     f.close()
+#     return (resultsx, resultsy)
