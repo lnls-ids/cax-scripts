@@ -57,6 +57,13 @@ def average_snapshots(
         val = sn[DVF].attrs[observable]
         if isinstance(val, (list, np.ndarray)):
             val = val[0]
+        try:
+            val = float(val)
+        except (TypeError, ValueError):
+            print(f"WARNING: Could not convert value '{val}'"
+                  f"to float for observable '{observable}'.\n"
+                  f" Skipping snapshot '{sn}' for observable '{observable}'.")
+            val = 0.0
         total.append(float(val))
     return np.mean(total) * unit, np.std(total) * unit
 
