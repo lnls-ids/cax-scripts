@@ -498,7 +498,7 @@ class DataScan:
             step_data  = scan_dict[sk]
             step_attrs = _group_all_attrs(step_data)
 
-            step_idx = int(sk.split('-')[-1])
+            step_idx = int(sk.split('-')[1])
 
             image_b1 = step_data.get('dvf_B1', {}).get('data')
             image_a1 = step_data.get('dvf_A1', {}).get('data')

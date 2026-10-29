@@ -521,7 +521,7 @@ class Histogram2DAnalyzer:
             # Typically, edges is np.array(None), so the usual is None condition
             # will never fire, although the object IS None. the extra condition
             # ensures things will run smoothly.
-            if (edges is None) or (any(edges) == None):
+            if (edges is None) or (edges == None):
                 return np.arange(count + 1, dtype=float)
             try:
                 edges = np.asarray(edges, dtype=float)
