@@ -94,7 +94,7 @@ class CAXMirrorMove:
 
         return step
 
-    def device_scan(self, scanargs, h5file=None):
+    def device_scan(self, scanargs, h5file=None, do_return_to_initial=False):
         """Scan a mirror motor and return collected data.
 
         Args:
@@ -131,7 +131,8 @@ class CAXMirrorMove:
                 continue
 
         # Return motor to initial position.
-        self.m1.move(motor, step0['mirror'][motor][0])
+        if do_return_to_initial:
+            self.m1.move(motor, step0['mirror'][motor][0])
         
         try:
             self._step_update_and_save(h5file, idx+2, motor,
@@ -298,7 +299,7 @@ class CAXSlitMove:
 
         return step
     
-    def device_scan(self, scanargs, h5file=None):
+    def device_scan(self, scanargs, h5file=None, do_return_to_initial=False):
         """Scan slit positions and return collected data.
 
         Args:
@@ -345,8 +346,9 @@ class CAXSlitMove:
                     continue
                 step_idx += 1
 
-        # Return to initial slit positions after scan.
-        self.set_slit_all(*scanargs['slit_initial_status'])
+        # Return to initial slit positions after scan if requested.
+        if do_return_to_initial:
+            self.set_slit_all(*scanargs['slit_initial_status'])
         try:
             self._step_update_and_save(h5file, slit, step_idx,
                                        (None, None, winsize),
@@ -524,7 +526,7 @@ class CAXLensMove(_PVAccessor):
 
         return step
 
-    def device_scan(self, scanargs, h5file=None):
+    def device_scan(self, scanargs, h5file=None, do_return_to_initial=False):
         """Scan lens position and return collected data.
 
         Args:
@@ -561,14 +563,15 @@ class CAXLensMove(_PVAccessor):
                 print(f" Could not save step {idx+1}: \n {err}\n")
                 continue
 
-        # Return to initial position after scan.
-        self.set_lens_pos(step0['dvf_B1']['lens_pos'][0])
-        try:
-            self._step_update_and_save(h5file, idx+2,
-                                       step_type='final')
-            print(" Ended final step -- snapshot saved. \n")
-        except Exception as err:
-            print(f" Could not save final step: \n {err}\n")
+        # Return to initial position after scan if requested.
+        if do_return_to_initial:
+            self.set_lens_pos(step0['dvf_B1']['lens_pos'][0])
+            try:
+                self._step_update_and_save(h5file, idx+2,
+                                           step_type='final')
+                print(" Ended final step -- snapshot saved. \n")
+            except Exception as err:
+                print(f" Could not save final step: \n {err}\n")
 
         elapsed = (time.time() - t0) / 60
         print(f'\nElapsed time [min]: {elapsed:.2f}')
