@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 
+"""Script for averaging snapshot observables."""
+
 # Import necessary libraries.
 
 import argparse
@@ -10,6 +12,9 @@ import matplotlib.pyplot as plt
 import numpy as np
 import h5py
 import os
+
+import matplotlib as mpl
+from matplotlib.figure import Figure
 
 from scipy.optimize import curve_fit
 
@@ -30,13 +35,15 @@ OBSERVABLE_KEYS = [
 ]
 
 # Default initial guesses and maximum function evaluations for caustic fitting.
-P0_x   = np.array([ 50.0, 15.0, 150.0])
+P0_x   = np.array([50.0, 15.0, 150.0])
 P0_y   = np.array([100.0, 15.0, 700.0])
 MAXFEV = 10000
+
 
 """
 Functions for blocking snapshots and averaging over each set.
 """
+
 
 def average_snapshots(
         snapshots  : list,
@@ -48,9 +55,12 @@ def average_snapshots(
     Args:
         snapshots (list) : List of snapshots.
         observable (str) : The key of the observable to average.
+        unit (float) : The unit to multiply the averaged observable by.
+            Defaults to PIXEL_SIZE.
 
     Returns:
-        tuple: A tuple containing the average value and the standard deviation of the observable over the snapshots.
+        tuple: A tuple containing the average value and the standard deviation
+            of the observable over the snapshots.
     """
     total = []
     for sn in snapshots:
@@ -68,14 +78,16 @@ def average_snapshots(
     return np.mean(total) * unit, np.std(total) * unit
 
 
-def block_snapshots(data : "h5py.File") -> list:
+def block_snapshots(data : "h5py.File") -> tuple:
     """Separate snapshots in blocks based on step identifiers.
 
     Args:
-        data ("h5py.File") : HDF5 file containing snapshot data, with keys as snapshot names.
+        data ("h5py.File") : HDF5 file containing snapshot data,
+            with keys as snapshot names.
 
     Returns:
-        list: A list of blocks, where each block is a list of snapshots corresponding to the same step identifier.
+        list: A list of blocks, where each block is a list of snapshots
+            corresponding to the same step identifier.
     """
     # Sort data list.
     sdata = sorted(list(data))
@@ -93,13 +105,13 @@ def block_snapshots(data : "h5py.File") -> list:
             snapshots = [data[name]]
         step_last = name
 
-    nsnaps = int(max([f"{len(st):3d}" for st in steps]))
+    nsnapshots = int(max([f"{len(st):3d}" for st in steps]))
     # stlengths = [f"{len(st):3d}" for st in steps]
     # print("Steps:  ", ' '.join([f"{ii:3d}" for ii in range(len(steps))]))
     # print("Lengths:", ' '.join(stlengths))
     # print("\n### nsnaps: ", nsnaps, "\n###\n")
 
-    return steps, nsnaps
+    return steps, nsnapshots
 
 
 def calculate_observables(
@@ -109,11 +121,13 @@ def calculate_observables(
     """Calculate observables for each block of snapshots.
 
     Args:
-        steps (list) : List of blocks of snapshots, where each block is a list of snapshots corresponding to the same step identifier.
+        steps (list) : List of blocks of snapshots, where each block
+            is a list of snapshots corresponding to the same step identifier.
         observable_keys (list) : List of observable keys to calculate.
 
     Returns:
-        dict: A dictionary where keys are observable names and values are numpy arrays of averaged observables for each block.
+        dict: A dictionary where keys are observable names and values
+            are numpy arrays of averaged observables for each block.
     """
     observables = {}
     for key, unit in observable_keys:
@@ -159,7 +173,8 @@ def caustic_processing(
         positions (np.ndarray) : Array of propagation positions [m].
 
     Returns:
-        tuple: waist position z0 [m], depth of focus dof [m], and Rayleigh range zr [m].
+        tuple: waist position z0 [m], depth of focus dof [m], and
+            Rayleigh range zr [m].
     """
     z = np.linspace(positions[0], positions[-1], 2000)
     widths_c_fit = caustic_func(z, *params)
@@ -174,7 +189,7 @@ def caustic_processing(
 def observable_set_calc(
         ddir  : str,
         files : list
-        ) -> dict:
+        ) -> tuple:
     """Calculate observables for each file.
 
     Args:
@@ -182,18 +197,28 @@ def observable_set_calc(
         files (list) : List of data files to process.
 
     Returns:
-        dict: Dictionary containing observables for each ry value.
+        tuple: A tuple containing:
+            - dict: Dictionary containing observables for each ry value.
+            - int: Number of snapshots.
+            - float: Dwell time.
     """
     observables = {}
+
+    # Default values to avoid lint complaints.
+    nsnapshots = None
+    dwell_time = None
+    if not files:
+        raise ValueError("No data files were provided.")
+
     for cfile in files:
         # Read data set.
         wfile = f"{ddir}/{cfile}"
         cdatum = h5py.File(wfile, "r")
 
-        # 
         print(f"* Processing file: {cfile}")
-        steps, nsnaps = block_snapshots(cdatum)
+        steps, nsnapshots = block_snapshots(cdatum)
         print(f"  Total steps found: {len(steps)}.\n")
+
         cdat_scan1 = list(cdatum.keys())[1]
         try:
             ry = cdatum[cdat_scan1].attrs["mirror.ry"][0]
@@ -204,9 +229,9 @@ def observable_set_calc(
         observables[ry] = (
             calculate_observables(steps, OBSERVABLE_KEYS)
             )
-    dwell_time = cdatum[cdat_scan1].attrs["dwell_time"]
+        dwell_time = cdatum[cdat_scan1].attrs["dwell_time"]
 
-    return observables, nsnaps, dwell_time
+    return observables, nsnapshots, dwell_time
 
 
 def hyperbola_fitting(
@@ -218,12 +243,12 @@ def hyperbola_fitting(
         obsy       : str        = "roiy_fit_sigma",
         ) -> tuple:
     """Fitting of hyperbolae.
-    
-    Args:
-        observables (dict) : Dictionary containing observables for each ry      
-                             value.
 
-        # Parameters for fitting: default is defined by header 
+    Args:
+        observables (dict) : Dictionary containing observables for each ry
+                            value.
+
+        # Parameters for fitting: default is defined by header
         # general parameters.
         p0_x (np.ndarray)  : Initial guess for x-direction caustic parameters.
         p0_y (np.ndarray)  : Initial guess for y-direction caustic parameters.
@@ -235,11 +260,11 @@ def hyperbola_fitting(
         obsy (str)         : Observable key for y-direction fitting.
 
     Returns:
-        tuple: Dictionaries of fitted caustic parameters for x and y directions.    
+        tuple: Dictionaries of fitted caustic parameters for x and y
+            directions.
     """
     caustic_x_params = {}
     caustic_y_params = {}
-
 
     cxp = ', '.join([f"{v:.4f}" for v in p0_x])
     cyp = ', '.join([f"{v:.4f}" for v in p0_y])
@@ -281,14 +306,14 @@ def hyperbola_fitting(
 def save_caustic_parameters(
         caustic_x_params : dict,
         caustic_y_params : dict,
-        coeffs_x         : tuple = None,
-        coeffs_y         : tuple = None,
+        coeffs_x         : tuple | None,
+        coeffs_y         : tuple | None,
         dwell_time       : float = 1.0,
         nsnapshots       : int = 1,
         ddir             : str = ".",
         ) -> None:
     """Save caustic fitting parameters to a file."""
-    file_basename =(
+    file_basename = (
         "all_passes"
         + f"-snapshots_{nsnapshots:02d}"
         + f"-dwell_{float(dwell_time):2.1f}s"
@@ -332,10 +357,9 @@ def plot_observables(
         obsy            : str   = 'roiy_fit_sigma',
         raw             : bool  = False,
         fitted          : bool  = False,
-        ) -> None:
+        ) -> tuple:
     """Plot caustic fitting results and observables."""
     fig, axes = plt.subplots(2, 3, figsize=(20, 10))
-
 
     prm  = (
         f"{len(observables)} passes,"
@@ -348,7 +372,8 @@ def plot_observables(
     nax = 1 if obsx == "roix_fit_sigma" else 2
 
     rys = sorted(observables.keys())
-    colormap = plt.get_cmap("jet")(np.linspace(0, 1, len(rys)))
+    # colormap = plt.get_cmap("jet")(np.linspace(0, 1, len(rys)))
+    colormap = mpl.colormaps["jet"](np.linspace(0, 1, len(rys)))
 
     for ii, ry in enumerate(rys):
         observable = observables[ry]
@@ -430,18 +455,24 @@ def plot_observables(
 
     z0_x_fit, coeffs_x = line_fit(np.array(rys), np.array(z0_x))
     z0_y_fit, coeffs_y = line_fit(np.array(rys), np.array(z0_y))
+
+    ax, bx = coeffs_x
+    ay, by = coeffs_y
+    ry0 = (by - bx) / (ax - ay)
+    z0 = (ax * by - ay * bx) / (ax - ay)
+
     print("Coefficients for z0 fit, x:",
           f"a = { coeffs_x[0]}, b = {coeffs_x[1]}")
     print("Coefficients for z0 fit, y:",
           f"a = { coeffs_y[0]}, b = {coeffs_y[1]}")
     axes[0, 2].plot(
-        rys, z0_x, 'o-', label=f'z0_x (ry = {ry:.4f})',
+        rys, z0_x, 'o-', label='z0_x',
         )
     axes[0, 2].plot(
         rys, z0_x_fit, 'o-', label='z0_x fit',
         )
     axes[0, 2].plot(
-        rys, z0_y, 'o-', label=f'z0_y (ry = {ry:.4f})',
+        rys, z0_y, 'o-', label='z0_y',
         )
     axes[0, 2].plot(
         rys, z0_y_fit, '^-', label='z0_y fit',
@@ -456,6 +487,7 @@ def plot_observables(
 
     axes[0, 2].set_ylabel('$z_0,x$ [mm]')
     axes[1, 2].set_ylabel('$z_0,y$ [mm]')
+    axes[0, 2].set_title(rf"$R_y = {ry0:.4f}$, $z_0 = {z0:.4f}$")
 
     for nax in np.array(np.meshgrid(range(2), range(3))).T.reshape(-1, 2):
         axes[tuple(nax)].legend()
@@ -486,7 +518,7 @@ def line_fit(x: np.ndarray, y: np.ndarray) -> tuple:
 
 
 def save_figure(
-        fig        : "plt.Figure",
+        fig        : Figure,
         wdir       : str = ".",
         nsnapshots : int = 1,
         dwell_time : float = 1.0
@@ -503,7 +535,7 @@ def save_figure(
 
 
 def cmd_line() -> argparse.Namespace:
-    import argparse
+    """Parse command line arguments."""
     parser = argparse.ArgumentParser(
         description="Process caustic scan results."
         )
@@ -538,11 +570,11 @@ def cmd_line() -> argparse.Namespace:
 
 
 def _isinteger(s: str) -> bool:
-    '''Tests whether a string is a positive integer number.
-     
+    """Tests whether a string is a positive integer number.
+
     Returns:
     bool: True if the string represents a positive integer, False otherwise.
-    '''
+    """
     if (s == ''):
         return False
     for c in s:
@@ -551,8 +583,62 @@ def _isinteger(s: str) -> bool:
     return True
 
 
-def _read_range (ifls: int, nfls: int) -> list:
-    '''Ask interval range.
+def read_input(ifls: int, nfls: int) -> list | str:
+    """Read input from the user with the given prompt.
+
+    Args:
+        ifls (int): Initial file number in the list.
+        nfls (int): Number of files in the list.
+
+    Returns:
+        str: The user's input.
+    """
+    # Read numbers corresponding to file list.
+    s = input(' ? > ')
+
+    if s == '':
+        return read_input(ifls, nfls)
+    elif s.lower() == 'a':
+        return list(range(1, nfls + 1))
+    elif s == 'q':
+        sys.exit(0)
+
+    for c in s:
+        if (c not in (string.digits + '-' + ' ')):
+            print(' Please, type only digits '
+                'and the character \"-\".')
+            return read_input(ifls, nfls)
+
+    return s
+
+
+def _range_list(st : list) -> list | None:
+    """Convert a list of range strings into a list of integers.
+
+    Args:
+        st (list): List of range strings.
+
+    Returns:
+        list: List of integers represented by the ranges.
+    """
+    ts = []
+    for rg in st:
+        if re.search('-', rg):
+            ffs = rg.split('-')
+            try:
+                a = int(ffs[0])
+                b = int(ffs[1])
+            except ValueError:
+                print(' Interval must be composed of integers.')
+                return None
+            ts = ts + list(range(a, b + 1))
+        else:
+            ts = ts + [int(rg)]
+    return ts
+
+
+def _read_range(ifls: int, nfls: int) -> list:
+    """Ask interval range.
 
     Args:
         ifls (int): Initial file number in the list.
@@ -560,55 +646,24 @@ def _read_range (ifls: int, nfls: int) -> list:
 
     Returns:
         list: List of chosen file numbers.
-    '''
-    
+    """
     while (True):
-        # Read numbers corresponding to file list.
-        s = input(' ? > ')
-        
-        if  (s == ''):
-            continue
-        elif (s.lower() == 'a'):
-            return list(range(1, nfls + 1))
-        elif (s == 'q'):
-            sys.exit(0)
-            
-        try:
-            for c in s:
-                if (c not in (string.digits + '-' + ' ')):
-                    raise Exception (' Please, type only digits '
-                                     'and the character \"-\".')   
-        except Exception as err:
-            print (err)
-            continue
+        s = read_input(ifls, nfls)
+
+        if isinstance(s, list):
+            return s
 
         # Test whether chosen files are suitable
-        s = re.sub(r'\s+', ' ', s)
-        s = re.sub(r'\s*-\s*', '-', s)
-        s = re.sub(r'-+', '-', s)
+        s = " ".join(s.split())         # Remove extra spaces
+        s = re.sub(r'\s*-\s*', '-', s)  # Remove spaces around hyphens
+        s = re.sub(r'-+', '-', s)       # Squeeze hyphens
         ss = s.split()
-        ts = []
-        
-        for rg in ss:
-            if (re.search('-', rg)):
-                try:
-                    ffs = rg.split('-')
-                    for num in ffs:
-                        if (not _isinteger(num)):
-                            raise Exception(' Expression not recognized.')
-                        a = int(ffs[0])
-                        b = int(ffs[1])
-                        if (a > b):
-                            raise Exception(' Range limits are out of order.')
-                except Exception as err:
-                    print (err, 'Please, type again.')
-                    break
-                fs = [ x for x in range(a, b + 1) ]
-            else:
-                fs = [ int(rg) ]
-            ts = ts + fs
 
-        #
+        # Extract the list of integers from the range strings.
+        ts = _range_list(ss)
+        if ts is None or len(ts) == 0:
+            continue
+
         if (ts == []):
             continue
 
@@ -616,11 +671,11 @@ def _read_range (ifls: int, nfls: int) -> list:
             print(f' Error: numbers must be within the interval'
                   f' {ifls} to {nfls}.')
             continue
-        
+
         if 0 in ts:
             if not len(ts) == 1:
-                print (' Error: "0" option must be chosen alone, '
-                       'not within an interval.')
+                print(' Error: "0" option must be chosen alone, '
+                      'not within an interval.')
                 continue
 
         return ts
@@ -656,7 +711,7 @@ def choose_files(ddir : str) -> list:
 
     if isinstance(choices[0], str) and choices[0].upper() == "A":
         return listfiles
- 
+
     for choice in choices:
         idx = int(choice) - 1
         if 0 <= idx < len(listfiles):
@@ -669,7 +724,7 @@ def choose_files(ddir : str) -> list:
 def main() -> None:
     """Main function to process caustic scan results."""
     # Get directory containing the data files.
-    args = cmd_line() 
+    args = cmd_line()
     if args.dir is None:
         print("Data directory is required.")
         return
