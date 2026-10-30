@@ -568,6 +568,8 @@ def _read_range (ifls: int, nfls: int) -> list:
         
         if  (s == ''):
             continue
+        elif (s.lower() == 'a'):
+            return list(range(1, nfls + 1))
         elif (s == 'q'):
             sys.exit(0)
             
@@ -607,7 +609,8 @@ def _read_range (ifls: int, nfls: int) -> list:
             ts = ts + fs
 
         #
-        if (ts == []): continue
+        if (ts == []):
+            continue
 
         if min(ts) < ifls or max(ts) > nfls:
             print(f' Error: numbers must be within the interval'
@@ -643,16 +646,15 @@ def choose_files(ddir : str) -> list:
     print("\t[ a]: All files")
     print("\t[ q]: Quit")
 
-    choices = input(
-        "Enter the number of the files to choose separated by spaces: "
-        ).split()
+    print("Enter the number of the files to choose separated by spaces: ")
+    choices = _read_range(1, len(listfiles))
     selected_files = []
 
-    if choices[0].upper() == "Q":
+    if isinstance(choices[0], str) and choices[0].upper() == "Q":
         print("Quitting.")
         sys.exit(0)
 
-    if choices[0].upper() == "A":
+    if isinstance(choices[0], str) and choices[0].upper() == "A":
         return listfiles
  
     for choice in choices:
